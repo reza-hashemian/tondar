@@ -136,7 +136,8 @@ class DownloadRow(Gtk.ListBoxRow):
         if state == self._state:
             return
         self._state = state
-        self.name.set_label(it.display_name)
+        # Left-to-right base direction: "آموزش ۱.mp4" must not render as "mp4.آموزش ۱"
+        self.name.set_label("‎" + it.display_name)
         self.name.set_tooltip_text(it.url)
         self.icon.set_from_icon_name(CATEGORY_ICONS.get(it.category, "text-x-generic"))
         self.bar.set_fraction(it.progress)
