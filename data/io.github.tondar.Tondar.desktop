@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Tondar Download Manager
+GenericName=Download Manager
+Comment=Fast multi-connection downloads, video downloads and browser integration
+Exec=tondar %U
+Icon=io.github.tondar.Tondar
+Terminal=false
+Categories=Network;FileTransfer;GTK;
+Keywords=download;manager;idm;video;youtube;
+StartupNotify=true

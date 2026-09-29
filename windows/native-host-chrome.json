@@ -1,0 +1,7 @@
+{
+  "name": "com.tondar.host",
+  "description": "Tondar Download Manager",
+  "path": "tondar-native-host.exe",
+  "type": "stdio",
+  "allowed_origins": ["chrome-extension://beoabpicfajnboiblppakbnbmlhbkgpf/"]
+}

@@ -1,0 +1,48 @@
+{
+  "manifest_version": 3,
+  "name": "Tondar Download Manager",
+  "version": "1.0.0",
+  "description": "Send downloads and videos to the Tondar download manager.",
+  "permissions": [
+    "downloads",
+    "nativeMessaging",
+    "contextMenus",
+    "cookies",
+    "webRequest",
+    "storage",
+    "tabs"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Tondar",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "32": "icons/icon-32.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "all_frames": true,
+      "run_at": "document_idle"
+    }
+  ],
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAxyFoZeL0AN6Q8n0B7ZxuIac3ojtur3wf/gtUqBQEfC8w7CtTZZSZ7GI+8NFcUjJcw2miNVBZ5GOUoERS/ph225++kTa3wERGqR4pkPMvQe9G3STNBQ7UzoyU4LZUR6NbpR9MJTeldo1KSo1PrK99JEFZYeyYt/MaNA6w3eHuXvbMh0PkoYP1dpjyOTDVY+ZoLaGhgZzDQSMpRozVIfrtr46sjKxh7IOdPSnGce0gnqnnzK2Kcl1gcw2g47/qWc0/l5VObae49/s3iHTLIEgQv46TJdq5fJLmTJxzjEFtKq9bpI45X6b7G86mvEuw6byh4t8KbXzmkeLLzswl8DWWdQIDAQAB",
+  "background": {
+    "service_worker": "background.js"
+  }
+}
