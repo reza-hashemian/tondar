@@ -92,10 +92,39 @@ jobs:
           name: tondar-windows
           path: windows/Output/Tondar-Setup-*.exe
 
+  firefox:
+    name: Sign Firefox add-on
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Sign with Mozilla (unlisted channel)
+        env:
+          WEB_EXT_API_KEY: ${{ secrets.AMO_JWT_ISSUER }}
+          WEB_EXT_API_SECRET: ${{ secrets.AMO_JWT_SECRET }}
+        run: |
+          if [ -z "$WEB_EXT_API_KEY" ] || [ -z "$WEB_EXT_API_SECRET" ]; then
+            echo "::error::Add AMO_JWT_ISSUER and AMO_JWT_SECRET under Settings → Secrets and variables → Actions"
+            exit 1
+          fi
+          python3 tools/build-extension.py
+          npx --yes web-ext@8 sign --channel=unlisted --source-dir build/extension/firefox \
+            --artifacts-dir signed --approval-timeout 900000
+          v=$(python3 -c "import re; print(re.search(r'^VERSION = \"(.+)\"', open('src/tondar/__init__.py').read(), re.M).group(1))")
+          mv signed/*.xpi "tondar-firefox-$v.xpi"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tondar-firefox
+          path: tondar-firefox-*.xpi
+
   release:
     name: Publish release
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: [linux, windows]
+    # Publish even if Firefox signing failed (e.g. keys not set yet); the add-on is then just missing.
+    if: always() && startsWith(github.ref, 'refs/tags/v') && needs.linux.result == 'success' && needs.windows.result == 'success'
+    needs: [linux, windows, firefox]
     runs-on: ubuntu-latest
     permissions:
       contents: write

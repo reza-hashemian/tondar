@@ -14,7 +14,7 @@ import struct
 import subprocess
 import sys
 
-VERSION = "1.3.0"
+VERSION = "1.3.1"
 WINDOWS = sys.platform == "win32"
 
 

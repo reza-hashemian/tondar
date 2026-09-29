@@ -45,13 +45,12 @@ Don't move or delete that folder; Chrome loads the extension from it.
 
 **Firefox**
 
-Regular Firefox only accepts extensions signed by Mozilla, so use
-[Firefox ESR](https://www.mozilla.org/firefox/enterprise/) or
-[Firefox Developer Edition](https://www.mozilla.org/firefox/developer/):
+1. Download **`tondar-firefox-x.y.z.xpi`** from the
+   [latest release](https://github.com/reza-hashemian/tondar/releases/latest).
+2. Open `about:addons` in Firefox → ⚙ → **Install Add-on From File…** and choose the file,
+   or just drag the file onto a Firefox window. Click **Add**.
 
-1. Open `about:config`, search `xpinstall.signatures.required` and set it to **false**.
-2. Open `about:addons` → ⚙ → **Install Add-on From File…**
-3. Choose `%LOCALAPPDATA%\Programs\Tondar\extension\tondar-firefox.xpi`.
+The add-on is signed by Mozilla, so it works in regular Firefox (version 140 or newer).
 
 ### 3. Use it
 
@@ -114,14 +113,13 @@ yt-dlp و ffmpeg همراه برنامه نصب می‌شن، پس دانلود 
 
 این پوشه رو جابه‌جا یا پاک نکن، چون کروم افزونه رو از همون‌جا می‌خونه.
 
-**فایرفاکس:** نسخه‌ی معمولی فایرفاکس فقط افزونه‌های امضاشده رو قبول می‌کنه. برای همین باید
-**Firefox ESR** یا **Developer Edition** نصب کنی. بعد:
+**فایرفاکس:**
 
-۱. توی `about:config` مقدار `xpinstall.signatures.required` رو **false** کن.
+۱. فایل **`tondar-firefox-x.y.z.xpi`** رو از [صفحه‌ی آخرین نسخه](https://github.com/reza-hashemian/tondar/releases/latest) دانلود کن.
 
-۲. برو `about:addons`، روی ⚙ بزن و **Install Add-on From File** رو انتخاب کن.
+۲. توی فایرفاکس برو `about:addons`، روی ⚙ بزن و **Install Add-on From File** رو انتخاب کن و فایل رو بده. یا فایل رو بکش و روی پنجره‌ی فایرفاکس رها کن. بعد روی **Add** بزن.
 
-۳. فایل `tondar-firefox.xpi` رو از پوشه‌ی `%LOCALAPPDATA%\Programs\Tondar\extension` انتخاب کن.
+افزونه توسط Mozilla امضا شده، پس روی فایرفاکس معمولی (نسخه‌ی ۱۴۰ به بالا) نصب می‌شه.
 
 ### ۳. استفاده
 
@@ -156,8 +154,9 @@ Debian 13 / Ubuntu 24.10 or newer (needs GTK 4 and libadwaita 1.6+).
 **Browser extension**
 - Chrome / Chromium / Edge: `chrome://extensions` → Developer mode → Load unpacked →
   `/usr/share/tondar/extension/chrome`
-- Firefox ESR: `about:config` → `xpinstall.signatures.required = false`, then `about:addons` → ⚙ →
-  Install Add-on From File → `/usr/share/tondar/extension/tondar-firefox.xpi`
+- Firefox: download `tondar-firefox-x.y.z.xpi` from the
+  [latest release](https://github.com/reza-hashemian/tondar/releases/latest), then `about:addons` → ⚙ →
+  Install Add-on From File
 
 Data: `~/.local/share/tondar/downloads.json`, settings: `~/.config/tondar/settings.json`.
 
@@ -196,6 +195,11 @@ cd src && TONDAR_APP_ID=io.github.tondar.TondarDev python3 -m tondar   # run nex
 The Windows installer is built by GitHub Actions (`.github/workflows/build.yml`) with MSYS2,
 PyInstaller and Inno Setup. Every push builds both packages (see the **Actions** tab); pushing a
 tag like `v1.3.0` publishes them as a release.
+
+On tags, the Firefox add-on is also signed by Mozilla (unlisted channel, not listed in the store).
+This needs two repository secrets, **AMO_JWT_ISSUER** and **AMO_JWT_SECRET**, from
+<https://addons.mozilla.org/developers/addon/api/key/>. Mozilla signs each version only once, so
+bump `VERSION` in `src/tondar/__init__.py` before tagging.
 
 ```
 src/tondar/
