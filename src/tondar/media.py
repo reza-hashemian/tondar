@@ -34,6 +34,32 @@ def ytdlp_command():
     return [system] if system else None
 
 
+def _search_path():
+    """PATH for yt-dlp, with our own folder first so helpers the user drops there are found."""
+    return os.pathsep.join([os.path.join(data_dir(), "bin"), os.environ.get("PATH", "")])
+
+
+def _friendly(error):
+    """Turn yt-dlp errors ordinary users can fix themselves into instructions."""
+    if "PhantomJS not found" in error:
+        folder = os.path.join(data_dir(), "bin")
+        os.makedirs(folder, exist_ok=True)
+        exe = "phantomjs.exe" if WINDOWS else "phantomjs"
+        return (f"This site needs PhantomJS. Download it from phantomjs.org/download.html, unzip it, "
+                f"copy {exe} from its bin folder into {folder} and press Retry.")
+    return error
+
+
+# A captured stream link (.m3u8/.mpd) carries a token that expires; the page itself still works.
+EXPIRED_LINK = re.compile(r"HTTP Error (403|404|410)")
+
+
+def _page_fallback(item, error):
+    if item.page_url and item.page_url != item.url and EXPIRED_LINK.search(error or ""):
+        return item.page_url
+    return None
+
+
 def _ffmpeg_args():
     bundled = os.path.join(app_dir(), "tools", "ffmpeg")
     return ["--ffmpeg-location", bundled] if WINDOWS and os.path.isdir(bundled) else []
@@ -44,9 +70,10 @@ def _proc_kwargs():
     kw = {"encoding": "utf-8", "errors": "replace", "stdin": subprocess.DEVNULL}
     if WINDOWS:
         kw["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW
-        kw["env"] = dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONUTF8="1")
+        kw["env"] = dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONUTF8="1", PATH=_search_path())
     else:
         kw["start_new_session"] = True
+        kw["env"] = dict(os.environ, PATH=_search_path())
     return kw
 
 
@@ -131,6 +158,16 @@ def probe_media(item, playlist=False, proxy=None):
     cmd = ytdlp_command()
     if not cmd:
         raise RuntimeError("yt-dlp is not installed. Open the menu → Install / update yt-dlp.")
+    try:
+        return _probe(cmd, item, item.url, playlist, proxy)
+    except RuntimeError as e:
+        fallback = _page_fallback(item, str(e))
+        if not fallback:
+            raise
+    return _probe(cmd, item, fallback, playlist, proxy)
+
+
+def _probe(cmd, item, url, playlist, proxy):
     attempts = [True, False] if cookies_allowed(item) else [False]
     for with_cookies in attempts:
         cookie_file = write_cookie_file(item) if with_cookies else None
@@ -139,7 +176,7 @@ def probe_media(item, playlist=False, proxy=None):
         if cookie_file:
             args += ["--cookies", cookie_file]
         try:
-            proc = subprocess.run(args + ["--", item.url], capture_output=True, timeout=120, **_proc_kwargs())
+            proc = subprocess.run(args + ["--", url], capture_output=True, timeout=120, **_proc_kwargs())
         finally:
             if cookie_file:
                 os.unlink(cookie_file)
@@ -147,7 +184,7 @@ def probe_media(item, playlist=False, proxy=None):
             break
     if proc.returncode != 0:
         err = [line for line in proc.stderr.splitlines() if line.startswith("ERROR")]
-        raise RuntimeError((err[-1] if err else proc.stderr.strip()[-300:]) or "yt-dlp failed")
+        raise RuntimeError(_friendly((err[-1] if err else proc.stderr.strip()[-300:]) or "yt-dlp failed"))
     return json.loads(proc.stdout)
 
 
@@ -254,18 +291,26 @@ class MediaTask:
         name = sanitize_filename(clean_page_title(it.title), "") or "%(title).150B"
         if name.lower().endswith((".mp4", ".mkv", ".webm", ".m4a", ".mp3")):
             name = name.rsplit(".", 1)[0]
-        attempts = [True, False] if cookies_allowed(it) else [False]
-        for with_cookies in attempts:
-            rc, tail = self._run_ytdlp(cmd, name, with_cookies)
-            if rc == 0 or self.stopped.is_set():
-                break
-        if self.stopped.is_set():
-            return
-        if rc != 0:
-            errors = [line for line in tail if line.startswith("ERROR")]
-            raise RuntimeError((errors[-1] if errors else (tail[-1] if tail else f"yt-dlp exited with {rc}")))
+        error = self._try(cmd, name, it.url)
+        fallback = _page_fallback(it, error)
+        if fallback:
+            error = self._try(cmd, name, fallback)
+            if not error:
+                it.url = fallback  # a restart shouldn't hit the dead stream link again
+        if error:
+            raise RuntimeError(_friendly(error))
 
-    def _run_ytdlp(self, cmd, name, with_cookies):
+    def _try(self, cmd, name, url):
+        """Download `url`; returns yt-dlp's error, or None when done or stopped."""
+        attempts = [True, False] if cookies_allowed(self.item) else [False]
+        for with_cookies in attempts:
+            rc, tail = self._run_ytdlp(cmd, name, url, with_cookies)
+            if rc == 0 or self.stopped.is_set():
+                return None
+        errors = [line for line in tail if line.startswith("ERROR")]
+        return errors[-1] if errors else (tail[-1] if tail else f"yt-dlp exited with {rc}")
+
+    def _run_ytdlp(self, cmd, name, url, with_cookies):
         it = self.item
         cookie_file = write_cookie_file(it) if with_cookies else None
         args = cmd + [
@@ -281,7 +326,7 @@ class MediaTask:
             args += ["--cookies", cookie_file]
         if self.limiter.rate > 0:
             args += ["-r", str(int(self.limiter.rate))]
-        args += ["--", it.url]
+        args += ["--", url]
 
         tail = []
         base, last_done, last_total = 0, 0, 0
