@@ -4,7 +4,7 @@ import time
 from gi.repository import Adw, Gdk, Gio, GLib, Gtk
 
 from .core import COMPLETED, DOWNLOADING, ERROR, PAUSED, PAUSING, QUEUED
-from .util import CATEGORY_ICONS, human_size, human_time
+from .util import CATEGORY_ICONS, data_dir, human_size, human_time
 
 FILTERS = [
     ("all", "All Downloads", "folder-download-symbolic"),
@@ -173,6 +173,7 @@ class DownloadRow(Gtk.ListBoxRow):
             info = f"Failed: {it.error}"
             self.info.add_css_class("error")
         self.info.set_label(info)
+        self.info.set_tooltip_text("Click to see the whole message" if it.status == ERROR else None)
 
         running = it.status in (DOWNLOADING, QUEUED)
         self.toggle.set_visible(it.status not in (COMPLETED, PAUSING))
@@ -191,6 +192,39 @@ class DownloadRow(Gtk.ListBoxRow):
         else:
             self.win.manager.start(self.item)
         self.update()
+
+    def activate_row(self):
+        if self.item.status == ERROR:
+            self._show_error()
+        else:
+            self._open()
+
+    def _show_error(self):
+        error = self.item.error
+        dialog = Adw.AlertDialog(heading="Download Failed", body=error)
+        dialog.add_response("close", "Close")
+        dialog.add_response("copy", "Copy")
+        folder = os.path.join(data_dir(), "bin")
+        if "PhantomJS" in error:
+            dialog.add_response("folder", "Open Folder")
+        dialog.add_response("retry", "Retry")
+        dialog.set_response_appearance("retry", Adw.ResponseAppearance.SUGGESTED)
+        dialog.set_default_response("retry")
+        dialog.set_close_response("close")
+
+        def on_response(_d, response):
+            if response == "copy":
+                self.get_clipboard().set(error)
+                self.win.toast("Message copied")
+            elif response == "folder":
+                os.makedirs(folder, exist_ok=True)
+                open_uri(folder, self.win)
+            elif response == "retry" and self.item.status == ERROR:
+                self.win.manager.start(self.item)
+                self.update()
+
+        dialog.connect("response", on_response)
+        dialog.present(self.win)
 
     def _open(self):
         if self.item.status == COMPLETED and os.path.exists(self.item.path):
@@ -337,7 +371,7 @@ class MainWindow(Adw.ApplicationWindow):
         self.list.add_css_class("boxed-list")
         self.list.set_filter_func(self._filter_row)
         self.list.set_sort_func(lambda a, b: (b.item.created > a.item.created) - (b.item.created < a.item.created))
-        self.list.connect("row-activated", lambda _l, row: row._open())
+        self.list.connect("row-activated", lambda _l, row: row.activate_row())
         clamp = Adw.Clamp(maximum_size=1100, child=self.list, margin_top=12, margin_bottom=12, margin_start=12, margin_end=12)
         scrolled = Gtk.ScrolledWindow(child=clamp, vexpand=True, hscrollbar_policy=Gtk.PolicyType.NEVER)
 
