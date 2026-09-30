@@ -3,6 +3,7 @@ import json
 import os
 import subprocess
 import sys
+import traceback
 
 import gi
 
@@ -135,9 +136,14 @@ class App(Adw.Application):
 
     # --- periodic update --------------------------------------------------------------------
     def _tick(self):
-        self.manager.tick()
-        if self.window and self.window.get_visible():
-            self.window.refresh()
+        # An exception escaping a GLib timeout removes it for good: downloads would sit in
+        # "Waiting in queue" and the window would stop updating.
+        try:
+            self.manager.tick()
+            if self.window and self.window.get_visible():
+                self.window.refresh()
+        except Exception:  # noqa: BLE001
+            traceback.print_exc()
         return True
 
     # --- notifications -------------------------------------------------------------------------

@@ -379,4 +379,12 @@ def _atomic_json(path, data):
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w") as f:
         json.dump(data, f, ensure_ascii=False, indent=1)
-    os.replace(tmp, path)
+    for attempt in range(10):
+        try:
+            os.replace(tmp, path)
+            return
+        except PermissionError:
+            # Windows: antivirus or the search indexer briefly holds the old file open.
+            if attempt == 9:
+                raise
+            time.sleep(0.05)
