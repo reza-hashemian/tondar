@@ -4,6 +4,9 @@ import sys
 import urllib.parse
 
 WINDOWS = sys.platform == "win32"
+MACOS = sys.platform == "darwin"
+# No D-Bus: a single instance is kept by ipc.py and the app ships its own yt-dlp and ffmpeg.
+FROZEN_TOOLS = WINDOWS or MACOS
 # Characters and names Windows doesn't allow in file names
 WIN_BAD_CHARS = re.compile(r'[<>:"\\|?*]')
 WIN_RESERVED = re.compile(r"^(con|prn|aux|nul|com\d|lpt\d)(\..*)?$", re.I)
@@ -135,7 +138,7 @@ def config_dir():
 
 
 def app_dir():
-    """Folder with the bundled files (extension, yt-dlp.exe, ffmpeg) in the Windows build."""
+    """Folder with the bundled tools (yt-dlp, ffmpeg) in the Windows and macOS builds."""
     if getattr(sys, "frozen", False):
         return os.path.dirname(sys.executable)
     return os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))

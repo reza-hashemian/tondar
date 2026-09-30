@@ -1,12 +1,12 @@
 # Tondar (تندر) — Download Manager
 
-A download manager like IDM, for **Windows** and **Linux (Debian/Ubuntu)**:
+A download manager like IDM, for **Windows**, **macOS** and **Linux (Debian/Ubuntu)**:
 multi-connection resumable downloads, YouTube and other video/playlist downloads,
 a scheduler, proxy support, and a browser extension that adds a **Download** button to videos.
 
 [**⬇ Download the latest version**](https://github.com/reza-hashemian/tondar/releases/latest)
 
-**English:** [Install on Windows](#install-on-windows) · [Install on Linux](#install-on-linux) ·
+**English:** [Install on Windows](#install-on-windows) · [Install on macOS](#install-on-macos) · [Install on Linux](#install-on-linux) ·
 [Browser extension](#browser-extension) · [Using Tondar](#using-tondar) · [Troubleshooting](#troubleshooting)
 
 **فارسی:** [راهنمای فارسی](#راهنمای-فارسی)
@@ -31,6 +31,25 @@ yt-dlp and ffmpeg are included, so videos work right away.
 **Uninstall:** Windows Settings → Apps → **Tondar Download Manager** → Uninstall.
 Settings stay in `%APPDATA%\Tondar` and the list in `%LOCALAPPDATA%\Tondar`; delete those folders
 to remove everything.
+
+## Install on macOS
+
+macOS 12 or newer.
+
+1. Download from the [latest release](https://github.com/reza-hashemian/tondar/releases/latest):
+   **`Tondar-x.y.z-macos-arm64.dmg`** for Apple Silicon (M1, M2, …) or
+   **`Tondar-x.y.z-macos-x86_64.dmg`** for Intel Macs ( → About This Mac shows which one you have).
+2. Open the `.dmg` and drag **Tondar** onto **Applications**.
+3. The app isn't signed with an Apple developer ID, so the first time macOS says it
+   *can't be opened*. Click **Done**, then open **System Settings → Privacy & Security**, scroll down and
+   click **Open Anyway** next to Tondar. (Or run `xattr -cr /Applications/Tondar.app` in Terminal.)
+
+yt-dlp and ffmpeg are included. Tondar registers the browser bridge for Chrome, Edge, Brave, Chromium
+and Firefox each time it starts, so open it once before installing the extension.
+
+**Update:** drag the new version onto Applications and replace the old one.
+**Uninstall:** move Tondar from Applications to the Trash. Data is in `~/.local/share/tondar` and
+`~/.config/tondar`.
 
 ## Install on Linux
 
@@ -60,6 +79,8 @@ Install Tondar first.
 3. Click **Load unpacked** and choose the extension folder:
    - Windows: `%LOCALAPPDATA%\Programs\Tondar\extension\chrome`
      (paste this into the folder box of the dialog; Windows expands it)
+   - macOS: `/Applications/Tondar.app/Contents/Resources/extension/chrome`
+     (in the dialog press ⌘⇧G and paste this path)
    - Linux: `/usr/share/tondar/extension/chrome`
 4. Pin the Tondar icon in the toolbar. Its popup should say **Connected**.
 
@@ -135,7 +156,7 @@ The Firefox add-on is signed by Mozilla, so it installs in regular Firefox.
 | No **Download** button on a video | Reload the page after installing the extension. Very small videos (under 200×110) don't get a button. Use the toolbar icon instead. |
 | YouTube errors, e.g. “Sign in to confirm you're not a bot” | ☰ → **Install / Update yt-dlp**, or set a proxy. |
 | A download fails with **HTTP 403** or “link expired” | ⋮ → **Refresh Download Address…** and paste a new link to the same file. |
-| Video downloads have no sound or don't merge | ffmpeg is missing (Linux: `sudo apt install ffmpeg`; on Windows it's included). |
+| Video downloads have no sound or don't merge | ffmpeg is missing (Linux: `sudo apt install ffmpeg`; on Windows and macOS it's included). |
 | Scheduled downloads didn't start | Tondar must be running at that time: turn on **Start on login**, and check **Enable scheduler** and the days. |
 | Proxy **Test** fails with a proxy on another computer | Turn on “Allow connections from LAN” in the proxy app, and check the IP, port and type (HTTP vs SOCKS5). |
 | Windows: “Windows protected your PC” | The installer isn't signed. Click **More info** → **Run anyway**. |
@@ -146,7 +167,7 @@ The Firefox add-on is signed by Mozilla, so it installs in regular Firefox.
 
 ## راهنمای فارسی
 
-[نصب روی ویندوز](#نصب-روی-ویندوز) · [نصب روی لینوکس](#نصب-روی-لینوکس) · [افزونه‌ی مرورگر](#افزونه-برای-مرورگر) · [استفاده](#استفاده-از-تندر) · [رفع مشکل](#رفع-مشکل)
+[نصب روی ویندوز](#نصب-روی-ویندوز) · [نصب روی مک](#نصب-روی-مک) · [نصب روی لینوکس](#نصب-روی-لینوکس) · [افزونه‌ی مرورگر](#افزونه-برای-مرورگر) · [استفاده](#استفاده-از-تندر) · [رفع مشکل](#رفع-مشکل)
 
 ### نصب روی ویندوز
 
@@ -163,6 +184,25 @@ yt-dlp و ffmpeg همراه برنامه نصب می‌شن، پس دانلود 
 
 - **به‌روزرسانی:** نصب‌کننده‌ی نسخه‌ی جدید رو اجرا کن. لیست دانلودها سر جاش می‌مونه.
 - **حذف:** از Settings ویندوز برو به Apps و **Tondar Download Manager** رو Uninstall کن.
+
+### نصب روی مک
+
+مک‌اواس ۱۲ به بالا.
+
+۱. از [صفحه‌ی آخرین نسخه](https://github.com/reza-hashemian/tondar/releases/latest) فایل مناسب مکت رو دانلود کن:
+**`Tondar-x.y.z-macos-arm64.dmg`** برای مک‌های Apple Silicon (M1، M2 و…) یا
+**`Tondar-x.y.z-macos-x86_64.dmg`** برای مک‌های اینتلی. (از منوی  → About This Mac می‌تونی ببینی مکت کدومه.)
+
+۲. فایل `.dmg` رو باز کن و **Tondar** رو بکش روی پوشه‌ی **Applications**.
+
+۳. برنامه امضای اپل نداره، پس بار اول مک می‌گه نمی‌تونه بازش کنه. روی **Done** بزن، بعد برو
+**System Settings → Privacy & Security**، برو پایین و کنار Tondar روی **Open Anyway** بزن.
+(یا توی Terminal دستور `xattr -cr /Applications/Tondar.app` رو بزن.)
+
+yt-dlp و ffmpeg همراه برنامه هستن. قبل از نصب افزونه، یه بار تندر رو باز کن تا مرورگرها بتونن پیداش کنن.
+
+- **به‌روزرسانی:** نسخه‌ی جدید رو بکش روی Applications و جایگزین قبلی کن.
+- **حذف:** تندر رو از Applications بنداز توی سطل زباله.
 
 ### نصب روی لینوکس
 
@@ -199,6 +239,7 @@ sudo apt install ./tondar_*_all.deb ffmpeg
 
 ۳. روی **Load unpacked** بزن و پوشه‌ی افزونه رو انتخاب کن:
 - ویندوز: `%LOCALAPPDATA%\Programs\Tondar\extension\chrome` (این متن رو توی کادر آدرس پنجره paste کن)
+- مک: `/Applications/Tondar.app/Contents/Resources/extension/chrome` (توی پنجره ⌘⇧G رو بزن و این مسیر رو paste کن)
 - لینوکس: `/usr/share/tondar/extension/chrome`
 
 ۴. آیکون تندر رو به نوار ابزار pin کن. وقتی روش بزنی باید **Connected** نشون بده.
@@ -280,12 +321,14 @@ cd src && TONDAR_APP_ID=io.github.tondar.TondarDev python3 -m tondar   # run nex
 ```
 
 **Releases.** The Windows installer is built by GitHub Actions (`.github/workflows/build.yml`) with MSYS2,
-PyInstaller and Inno Setup. Every push builds both packages (see the **Actions** tab). To publish a release:
+PyInstaller and Inno Setup; the macOS `.dmg` files (Apple Silicon and Intel) with Homebrew's GTK and
+PyInstaller (`tools/build-macos.sh`). Both bundle a small ffmpeg built by `tools/build-ffmpeg.sh` that can
+only merge and remux, which is all yt-dlp needs from it. Every push builds all packages (see the **Actions** tab). To publish a release:
 
 1. Raise `VERSION` in `src/tondar/__init__.py` (Mozilla signs each version only once).
 2. Commit, then `git tag vX.Y.Z && git push origin main vX.Y.Z`.
 
-The release then gets the `.deb`, `Tondar-Setup-X.Y.Z.exe` and the signed `tondar-firefox-X.Y.Z.xpi`.
+The release then gets the `.deb`, `Tondar-Setup-X.Y.Z.exe`, the two macOS `.dmg` files and the signed `tondar-firefox-X.Y.Z.xpi`.
 Firefox signing uses Mozilla's unlisted channel (not listed in the add-ons store) and needs two repository
 secrets, **AMO_JWT_ISSUER** and **AMO_JWT_SECRET**, from <https://addons.mozilla.org/developers/addon/api/key/>.
 
@@ -295,12 +338,14 @@ src/tondar/
   http_task.py   multi-connection resumable downloader
   media.py       video/stream/playlist downloads through yt-dlp
   net.py         proxy support (HTTP, built-in SOCKS5)
-  ipc.py         single-instance support on Windows
+  ipc.py         single-instance support on Windows and macOS
+  macos.py       macOS: browser bridge registration, login item
   app.py         application, command line, notifications
   window.py      main window
   dialogs.py     New Download, Preferences, Browser Integration
 native-host/     bridge between the browser extension and the app (native messaging)
 extension/       browser extension (Manifest V3, Chrome and Firefox)
 windows/         PyInstaller spec, Inno Setup script, native messaging manifests
+macos/           PyInstaller spec for Tondar.app
 tools/           build scripts
 ```

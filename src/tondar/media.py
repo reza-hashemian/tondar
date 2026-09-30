@@ -12,9 +12,10 @@ import urllib.parse
 import urllib.request
 
 from .net import proxy_handlers
-from .util import WINDOWS, app_dir, clean_page_title, data_dir, sanitize_filename
+from .util import FROZEN_TOOLS, MACOS, WINDOWS, app_dir, clean_page_title, data_dir, sanitize_filename
 
-YTDLP_URL = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/" + ("yt-dlp.exe" if WINDOWS else "yt-dlp")
+YTDLP_URL = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/" + (
+    "yt-dlp.exe" if WINDOWS else "yt-dlp_macos" if MACOS else "yt-dlp")
 PROGRESS = "download:TONDAR|%(progress.downloaded_bytes)s|%(progress.total_bytes)s|%(progress.total_bytes_estimate)s"
 
 
@@ -26,9 +27,9 @@ def ytdlp_command():
     """Prefer our own always-up-to-date copy, then the one bundled with the app, then the system one."""
     own = private_ytdlp()
     if os.path.exists(own):
-        return [own] if WINDOWS else [sys.executable, own]
-    bundled = os.path.join(app_dir(), "tools", "yt-dlp.exe")
-    if WINDOWS and os.path.exists(bundled):
+        return [own] if FROZEN_TOOLS else [sys.executable, own]  # Linux: a Python zipapp
+    bundled = os.path.join(app_dir(), "tools", "yt-dlp.exe" if WINDOWS else "yt-dlp")
+    if FROZEN_TOOLS and os.path.exists(bundled):
         return [bundled]
     system = shutil.which("yt-dlp")
     return [system] if system else None
@@ -60,9 +61,18 @@ def _page_fallback(item, error):
     return None
 
 
-def _ffmpeg_args():
+def _bundled_ffmpeg():
     bundled = os.path.join(app_dir(), "tools", "ffmpeg")
-    return ["--ffmpeg-location", bundled] if WINDOWS and os.path.isdir(bundled) else []
+    return bundled if FROZEN_TOOLS and os.path.isdir(bundled) else None
+
+
+def ffmpeg_available():
+    return bool(_bundled_ffmpeg() or shutil.which("ffmpeg"))
+
+
+def _ffmpeg_args():
+    bundled = _bundled_ffmpeg()
+    return ["--ffmpeg-location", bundled] if bundled else []
 
 
 def _proc_kwargs():

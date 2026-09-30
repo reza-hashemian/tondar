@@ -14,14 +14,14 @@ from gi.repository import Adw, Gio, GLib, Gtk  # noqa: E402
 from . import APP_ID, VERSION, ipc  # noqa: E402
 from .core import COMPLETED, Item, Manager  # noqa: E402
 from .dialogs import AddWindow, BrowserDialog, PreferencesDialog  # noqa: E402
-from .util import WINDOWS, looks_like_media_page, sanitize_filename, unique_path  # noqa: E402
-from .window import MainWindow, open_folder, open_uri  # noqa: E402
+from .util import MACOS, WINDOWS, looks_like_media_page, sanitize_filename, unique_path  # noqa: E402
+from .window import MainWindow, bring_to_front, open_folder, open_uri  # noqa: E402
 
 
 class App(Adw.Application):
     def __init__(self):
         flags = Gio.ApplicationFlags.HANDLES_COMMAND_LINE
-        if WINDOWS:  # no D-Bus: single instance is handled by ipc.py
+        if WINDOWS or MACOS:  # no D-Bus: single instance is handled by ipc.py
             flags |= Gio.ApplicationFlags.NON_UNIQUE
         super().__init__(application_id=APP_ID, flags=flags)
         self.manager = None
@@ -37,8 +37,12 @@ class App(Adw.Application):
         self._shutdown_timer = 0
         # Stay alive without windows so the browser extension can always reach us.
         self.hold()
-        if WINDOWS:
+        if WINDOWS or MACOS:
             ipc.serve(lambda args: GLib.idle_add(self.handle_args, args))
+        if MACOS and getattr(sys, "frozen", False):
+            from .macos import register_native_host
+
+            register_native_host()
 
         for name, cb, accels in [
             ("add", lambda *_: self.open_add_dialog({}), ["<Primary>n"]),
@@ -109,7 +113,7 @@ class App(Adw.Application):
         return self.window
 
     def open_add_dialog(self, request):
-        AddWindow(self, request).present()
+        bring_to_front(AddWindow(self, request))
         return False
 
     def handle_request(self, req):
@@ -132,7 +136,7 @@ class App(Adw.Application):
         if name:
             item.filename = unique_path(item.folder, name, m.taken_paths())
         m.add(item, start=True)
-        self._notify("download-added", "Download started", item.display_name)
+        bring_to_front(self.present_main())  # show the new download in the list
 
     # --- periodic update --------------------------------------------------------------------
     def _tick(self):
@@ -212,6 +216,8 @@ class App(Adw.Application):
         self.manager.shutdown()
         if WINDOWS:
             cmd, kw = ["shutdown", "/s", "/t", "0"], {"creationflags": subprocess.CREATE_NO_WINDOW}
+        elif MACOS:
+            cmd, kw = ["osascript", "-e", 'tell application "System Events" to shut down'], {}
         else:
             cmd, kw = ["systemctl", "poweroff"], {}
         try:
@@ -261,6 +267,6 @@ class App(Adw.Application):
 
 def main(argv=None):
     argv = argv if argv is not None else sys.argv
-    if WINDOWS and ipc.forward(argv[1:]):
+    if (WINDOWS or MACOS) and ipc.forward(argv[1:]):
         return 0  # an instance is already running and took over
     return App().run(argv)

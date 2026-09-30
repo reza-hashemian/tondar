@@ -11,10 +11,11 @@ from .core import Item
 from .http_task import probe
 from .media import (
     PLAYLIST_HINT, YTDLP_URL, install_ytdlp, is_playlist, playlist_choices, playlist_entries, probe_media,
-    quality_choices, ytdlp_command, ytdlp_version,
+    ffmpeg_available, quality_choices, ytdlp_command, ytdlp_version,
 )
 from .net import display_proxy, test_proxy
-from .util import WINDOWS, app_dir, clean_page_title, human_size, human_time, looks_like_media_page, sanitize_filename
+from .util import MACOS, WINDOWS, app_dir, clean_page_title, human_size, human_time, looks_like_media_page, sanitize_filename
+from .window import show_in_folder
 
 MODES = ["File", "Video / stream (yt-dlp)"]
 
@@ -443,7 +444,7 @@ class PreferencesDialog(Adw.PreferencesDialog):
         self.ytdlp_btn.connect("clicked", lambda *_: self._update_ytdlp())
         self.ytdlp_row.add_suffix(self.ytdlp_btn)
         g.add(self.ytdlp_row)
-        ffmpeg = Adw.ActionRow(title="ffmpeg", subtitle="Installed" if shutil.which("ffmpeg")
+        ffmpeg = Adw.ActionRow(title="ffmpeg", subtitle="Installed" if ffmpeg_available()
                                else "Not installed — needed for HD YouTube. Run: sudo apt install ffmpeg")
         g.add(ffmpeg)
         page.add(g)
@@ -684,6 +685,11 @@ def launch_command():
 
 
 def set_autostart(enabled):
+    if MACOS:
+        from .macos import set_login_item
+
+        set_login_item(enabled)
+        return
     if WINDOWS:
         import winreg
 
@@ -711,6 +717,7 @@ def set_autostart(enabled):
 
 def extension_dir():
     for path in (os.path.join(app_dir(), "extension"), "/usr/share/tondar/extension",
+                 os.path.join(app_dir(), "..", "Resources", "extension"),  # Tondar.app
                  os.path.join(app_dir(), "build", "extension")):
         if os.path.isdir(os.path.join(path, "chrome")):
             return os.path.realpath(path)
@@ -759,7 +766,7 @@ class BrowserDialog(Adw.Dialog):
         if path:
             btn = Gtk.Button(icon_name="folder-open-symbolic", valign=Gtk.Align.CENTER, tooltip_text="Show in Files")
             btn.add_css_class("flat")
-            btn.connect("clicked", lambda *_: Gtk.FileLauncher.new(Gio.File.new_for_path(path)).open_containing_folder(app.window, None, None))
+            btn.connect("clicked", lambda *_: show_in_folder(path, app.window))
             row.add_suffix(btn)
             row.add_suffix(self._copy_btn(path))
         return row

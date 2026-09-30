@@ -3,8 +3,8 @@
 
 The browser starts this program for each message. It passes the download to the
 running Tondar instance (starting it in the background if needed) and exits.
-Installed as /usr/lib/tondar/tondar-native-host on Linux and as
-tondar-native-host.exe next to Tondar.exe on Windows.
+Installed as /usr/lib/tondar/tondar-native-host on Linux, as tondar-native-host.exe
+next to Tondar.exe on Windows and next to Tondar in Tondar.app/Contents/MacOS on macOS.
 """
 import base64
 import json
@@ -16,6 +16,7 @@ import sys
 
 VERSION = "1.3.1"
 WINDOWS = sys.platform == "win32"
+MACOS = sys.platform == "darwin"
 
 
 def read_message():
@@ -33,8 +34,8 @@ def send(obj):
 
 
 def tondar_command():
-    if getattr(sys, "frozen", False):  # Windows build: Tondar.exe sits next to us
-        return [os.path.join(os.path.dirname(sys.executable), "Tondar.exe")]
+    if getattr(sys, "frozen", False):  # Windows/macOS build: the app sits next to us
+        return [os.path.join(os.path.dirname(sys.executable), "Tondar.exe" if WINDOWS else "Tondar")]
     exe = shutil.which("tondar") or ("/usr/bin/tondar" if os.path.exists("/usr/bin/tondar") else None)
     if exe:
         return [exe]
@@ -64,7 +65,12 @@ def main():
     elif cmd == "add" and isinstance(msg.get("item"), dict):
         payload = base64.urlsafe_b64encode(json.dumps(msg["item"]).encode()).decode().rstrip("=")
         args = ["--add", payload]
-        if WINDOWS:
+        if WINDOWS or MACOS:
+            if WINDOWS:
+                # We were started by the browser, which has the focus: pass the right to take it to Tondar.
+                import ctypes
+
+                ctypes.windll.user32.AllowSetForegroundWindow(-1)  # ASFW_ANY
             from tondar import ipc  # bundled into the .exe
 
             if not ipc.forward(args):

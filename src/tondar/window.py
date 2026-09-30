@@ -1,10 +1,11 @@
 import os
+import subprocess
 import time
 
 from gi.repository import Adw, Gdk, Gio, GLib, Gtk
 
 from .core import COMPLETED, DOWNLOADING, ERROR, PAUSED, PAUSING, QUEUED
-from .util import CATEGORY_ICONS, data_dir, human_size, human_time
+from .util import CATEGORY_ICONS, MACOS, WINDOWS, data_dir, human_size, human_time
 
 FILTERS = [
     ("all", "All Downloads", "folder-download-symbolic"),
@@ -46,14 +47,94 @@ ROW_MENU = """
 """
 
 
+def bring_to_front(win):
+    """Show `win` above the browser that sent a download.
+
+    Windows keeps background programs from taking the focus; the native host lets us
+    (AllowSetForegroundWindow), but GTK doesn't ask for it, so do it by hand."""
+    win.present()
+    if MACOS:
+        from .macos import activate
+
+        activate()
+    if WINDOWS:
+        tries = [10]
+
+        def attempt():
+            tries[0] -= 1
+            return not _win32_foreground(win.get_title() or "") and tries[0] > 0
+
+        GLib.timeout_add(50, attempt)
+
+
+def _win32_foreground(title):
+    import ctypes
+    from ctypes import wintypes
+
+    user32, kernel32 = ctypes.windll.user32, ctypes.windll.kernel32
+    user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+    user32.GetWindowTextW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+    user32.SetWindowPos.argtypes = [wintypes.HWND, wintypes.HWND] + [ctypes.c_int] * 4 + [wintypes.UINT]
+    for name in ("IsWindowVisible", "IsIconic", "SetForegroundWindow", "BringWindowToTop"):
+        getattr(user32, name).argtypes = [wintypes.HWND]
+    user32.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
+    user32.GetForegroundWindow.restype = wintypes.HWND
+
+    pid, found = os.getpid(), []
+
+    @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+    def each(hwnd, _):
+        owner = wintypes.DWORD()
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(owner))
+        if owner.value == pid and user32.IsWindowVisible(hwnd):
+            buf = ctypes.create_unicode_buffer(512)
+            user32.GetWindowTextW(hwnd, buf, 512)
+            if buf.value == title:
+                found.append(hwnd)
+                return False
+        return True
+
+    user32.EnumWindows(each, 0)
+    if not found:
+        return False  # not mapped yet
+    hwnd = found[0]
+    if user32.IsIconic(hwnd):
+        user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+    # Topmost and back: on top even if Windows refuses to hand over the keyboard focus.
+    flags = 0x0001 | 0x0002 | 0x0040  # SWP_NOSIZE | SWP_NOMOVE | SWP_SHOWWINDOW
+    user32.SetWindowPos(hwnd, wintypes.HWND(-1), 0, 0, 0, 0, flags)
+    user32.SetWindowPos(hwnd, wintypes.HWND(-2), 0, 0, 0, 0, flags)
+    if not user32.SetForegroundWindow(hwnd):
+        # Share the input state of the foreground window's thread, which may then pass on the focus.
+        fg = user32.GetForegroundWindow()
+        fg_thread = user32.GetWindowThreadProcessId(fg, None)
+        me = kernel32.GetCurrentThreadId()
+        if fg_thread and fg_thread != me and user32.AttachThreadInput(me, fg_thread, True):
+            user32.BringWindowToTop(hwnd)
+            user32.SetForegroundWindow(hwnd)
+            user32.AttachThreadInput(me, fg_thread, False)
+    return True
+
+
 def open_uri(path, parent=None):
+    if MACOS:
+        subprocess.Popen(["open", path])
+        return
     launcher = Gtk.FileLauncher.new(Gio.File.new_for_path(path))
     launcher.launch(parent, None, None)
 
 
+def show_in_folder(path, parent=None):
+    """Open the folder with `path` selected."""
+    if MACOS:  # GTK asks a D-Bus file manager, which macOS doesn't have
+        subprocess.Popen(["open", "-R", path])
+    else:
+        Gtk.FileLauncher.new(Gio.File.new_for_path(path)).open_containing_folder(parent, None, None)
+
+
 def open_folder(path, parent=None):
     if os.path.isfile(path):
-        Gtk.FileLauncher.new(Gio.File.new_for_path(path)).open_containing_folder(parent, None, None)
+        show_in_folder(path, parent)
     else:
         open_uri(os.path.dirname(path) if not os.path.isdir(path) else path, parent)
 
