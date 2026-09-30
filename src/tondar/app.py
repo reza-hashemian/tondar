@@ -138,13 +138,16 @@ class App(Adw.Application):
     def _tick(self):
         # An exception escaping a GLib timeout removes it for good: downloads would sit in
         # "Waiting in queue" and the window would stop updating.
-        try:
-            self.manager.tick()
-            if self.window and self.window.get_visible():
-                self.window.refresh()
-        except Exception:  # noqa: BLE001
-            traceback.print_exc()
+        for step in (self.manager.tick, self._refresh_window):
+            try:
+                step()
+            except Exception:  # noqa: BLE001
+                traceback.print_exc()
         return True
+
+    def _refresh_window(self):
+        if self.window and self.window.get_visible():
+            self.window.refresh()
 
     # --- notifications -------------------------------------------------------------------------
     def _notify(self, nid, title, body, item=None):

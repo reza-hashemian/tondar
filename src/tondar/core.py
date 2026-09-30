@@ -3,6 +3,7 @@
 import collections
 import datetime
 import json
+import locale
 import os
 import time
 import uuid
@@ -137,17 +138,15 @@ class Manager:
 
     def _load(self):
         try:
-            with open(self._settings_file) as f:
-                self.settings.update(json.load(f))
+            self.settings.update(_read_json(self._settings_file))
         except (OSError, ValueError):
             pass
         try:
-            with open(self._list_file) as f:
-                for d in json.load(f):
-                    item = Item(**d)
-                    if item.status in (DOWNLOADING, PAUSING):
-                        item.status = QUEUED  # resume what was running when we quit
-                    self.items.append(item)
+            for d in _read_json(self._list_file):
+                item = Item(**d)
+                if item.status in (DOWNLOADING, PAUSING):
+                    item.status = QUEUED  # resume what was running when we quit
+                self.items.append(item)
         except (OSError, ValueError):
             pass
 
@@ -373,11 +372,21 @@ def _minutes(text):
     return h * 60 + m if 0 <= h < 24 and 0 <= m < 60 else None
 
 
+def _read_json(path):
+    with open(path, "rb") as f:
+        raw = f.read()
+    try:
+        return json.loads(raw.decode("utf-8"))
+    except UnicodeDecodeError:
+        return json.loads(raw.decode(locale.getpreferredencoding(False)))  # saved by 1.3.2 or older on Windows
+
+
 def _atomic_json(path, data):
     # Private: holds cookies and the proxy password.
     tmp = path + ".tmp"
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w") as f:
+    # Always UTF-8: Windows defaults to a code page that can't hold Persian names.
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=1)
     for attempt in range(10):
         try:
