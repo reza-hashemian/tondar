@@ -198,11 +198,17 @@ function shortUrl(url) {
   } catch (e) { return url; }
 }
 
-async function optionsFor(tabId, frameUrl, videoSrc) {
+async function optionsFor(tabId, frameUrl, videoSrc, postUrl) {
   await ready;
   const tab = await chrome.tabs.get(tabId).catch(() => null);
-  const pageUrl = tab ? tab.url : frameUrl;
-  const title = tab ? tab.title : "";
+  const tabUrl = tab ? tab.url : frameUrl;
+  let pageUrl = tabUrl;
+  let title = tab ? tab.title : "";
+  // A video in a feed: the content script found the post it belongs to.
+  if (postUrl && /^https:/i.test(postUrl) && frameUrl === tabUrl) {
+    pageUrl = postUrl;
+    title = ""; // the tab's title is the feed's, let yt-dlp name the video
+  }
   const opts = [];
   const list = media.get(tabId) || [];
 
@@ -228,7 +234,7 @@ async function optionsFor(tabId, frameUrl, videoSrc) {
   if (MEDIA_SITES.test(host) || !hasDirect) opts.unshift(pageOpt);
   else opts.push(pageOpt);
 
-  if (frameUrl && frameUrl !== pageUrl && /^https?:/i.test(frameUrl)) {
+  if (frameUrl && frameUrl !== tabUrl && /^https?:/i.test(frameUrl)) {
     opts.push({
       label: "Embedded player (yt-dlp)",
       sub: shortUrl(frameUrl),
@@ -242,7 +248,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   (async () => {
     if (msg.type === "options") {
       const tabId = msg.tabId ?? sender.tab?.id;
-      return optionsFor(tabId, msg.frameUrl || sender.url, msg.src);
+      return optionsFor(tabId, msg.frameUrl || sender.url, msg.src, msg.postUrl);
     }
     if (msg.type === "download") {
       try {

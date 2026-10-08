@@ -119,6 +119,28 @@
     place();
   }
 
+  // In a feed (instagram.com/, x.com/home) the address bar doesn't name the video; the post's own link does.
+  const POST_LINKS = [
+    [/(^|\.)instagram\.com$/, /\/(p|tv|reels?)\/[\w-]+/],
+    [/(^|\.)(x|twitter)\.com$/, /\/status\/\d+/],
+  ];
+
+  function permalink(v) {
+    const site = POST_LINKS.find(([host]) => host.test(location.hostname));
+    if (!site || !v || site[1].test(location.pathname)) return "";
+    for (let el = v.parentElement; el; el = el.parentElement) {
+      const found = new Set();
+      for (const a of el.querySelectorAll("a[href]")) {
+        let u;
+        try { u = new URL(a.href); } catch (err) { continue; }
+        const m = site[1].exec(u.pathname);
+        if (m && u.hostname === location.hostname) found.add(u.origin + u.pathname.slice(0, m.index + m[0].length) + "/");
+      }
+      if (found.size) return found.size === 1 ? [...found][0] : ""; // several posts: we climbed past this one
+    }
+    return "";
+  }
+
   async function onClick(e) {
     e.preventDefault();
     e.stopPropagation();
@@ -126,7 +148,7 @@
     note("Looking for videos…");
     let res;
     try {
-      res = await chrome.runtime.sendMessage({ type: "options", frameUrl: location.href, src: video && video.currentSrc });
+      res = await chrome.runtime.sendMessage({ type: "options", frameUrl: location.href, src: video && video.currentSrc, postUrl: permalink(video) });
     } catch (err) {
       return note("Extension was updated — reload this page.", "err");
     }
