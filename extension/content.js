@@ -128,7 +128,7 @@
   function permalink(v) {
     const site = POST_LINKS.find(([host]) => host.test(location.hostname));
     if (!site || !v || site[1].test(location.pathname)) return "";
-    for (let el = v.parentElement; el; el = el.parentElement) {
+    for (let el = v; el; el = el.parentElement) {
       const found = new Set();
       for (const a of el.querySelectorAll("a[href]")) {
         let u;
@@ -140,6 +140,16 @@
     }
     return "";
   }
+
+  // The right-click menu lives in the background script, which can't see what was clicked.
+  let menuPostUrl = "";
+  document.addEventListener("contextmenu", (e) => {
+    const el = e.composedPath()[0];
+    menuPostUrl = permalink(el instanceof Element ? el : null);
+  }, true);
+  chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+    if (msg.type === "postUrl") sendResponse({ postUrl: menuPostUrl });
+  });
 
   async function onClick(e) {
     e.preventDefault();

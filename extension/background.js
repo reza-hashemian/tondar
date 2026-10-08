@@ -292,7 +292,16 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   let req;
   if (info.menuItemId === "link") req = { url: info.linkUrl, kind: "http", referer: pageUrl, pageUrl };
   else if (info.menuItemId === "media" && /^https?:/i.test(info.srcUrl || "")) req = { url: info.srcUrl, kind: "http", referer: pageUrl, pageUrl, title };
-  else req = { url: info.frameUrl || pageUrl, kind: "media", referer: pageUrl, pageUrl, title };
+  else {
+    // In a feed the page isn't the video: ask the content script which post was clicked.
+    let postUrl = "";
+    if (tab && !info.frameId) {
+      const r = await chrome.tabs.sendMessage(tab.id, { type: "postUrl" }, { frameId: 0 }).catch(() => null);
+      if (r && /^https:/i.test(r.postUrl || "")) postUrl = r.postUrl;
+    }
+    if (postUrl) req = { url: postUrl, kind: "media", referer: postUrl, pageUrl: postUrl, title: "" };
+    else req = { url: info.frameUrl || pageUrl, kind: "media", referer: pageUrl, pageUrl, title };
+  }
   try {
     await sendToApp(req);
   } catch (e) {
