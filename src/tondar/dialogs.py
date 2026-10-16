@@ -172,7 +172,8 @@ class AddWindow(Adw.Window):
     def _target_folder(self):
         if self._folder_fixed:
             return self._folder
-        name = self.name_row.get_text()
+        # No name yet (link not checked): guess the category from the link itself.
+        name = self.name_row.get_text().strip() or self.url_row.get_text().strip()
         audio = self.is_media and self._selected_format().startswith("ba")
         return self.manager.folder_for(name, "media" if self.is_media else "http", audio)
 
