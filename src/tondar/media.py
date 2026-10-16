@@ -344,6 +344,126 @@ def playlist_choices():
     return choices
 
 
+# File types a video can be saved as. "Repackaged" ones need only ffmpeg's copy mode: same
+# quality, no re-encoding (the bundled ffmpeg can't encode).
+MERGEABLE = ("mp4", "mkv", "webm", "mov")
+AUDIO_EXTS = ("m4a", "webm", "mp3", "opus", "ogg", "aac", "flac", "wav")
+EXT_NAMES = {"webm": "WebM", "opus": "Opus"}
+
+
+def ext_name(ext):
+    return EXT_NAMES.get(ext, ext.upper())
+
+
+def format_summary(info):
+    """What the site offers: ({video_ext: (lowest, highest height)}, [audio exts]), most common first."""
+    video, audio = {}, []
+    for f in info.get("formats") or []:
+        ext = (f.get("ext") or "").lower()
+        if not ext or ext in ("mhtml", "none"):
+            continue
+        if f.get("vcodec") not in (None, "none") and f.get("height"):
+            lo, hi = video.get(ext, (f["height"], f["height"]))
+            video[ext] = (min(lo, f["height"]), max(hi, f["height"]))
+        elif f.get("vcodec") == "none" and f.get("acodec") not in (None, "none"):
+            if ext not in audio:
+                audio.append(ext)
+    order = {e: i for i, e in enumerate(("mp4", "webm", "mkv", "mov", "flv", "3gp"))}
+    video = dict(sorted(video.items(), key=lambda kv: (order.get(kv[0], 99), kv[0])))
+    return video, audio
+
+
+def describe_formats(info):
+    """One line for the New Download window: the file types this site has for the video."""
+    video, audio = format_summary(info)
+    parts = []
+    if video:
+        parts.append("Video: " + ", ".join(
+            f"{ext_name(e)} ({lo}p)" if lo == hi else f"{ext_name(e)} ({lo}p–{hi}p)" for e, (lo, hi) in video.items()))
+    if audio:
+        parts.append("Audio: " + ", ".join(ext_name(e) for e in audio))
+    return "  ·  ".join(parts)
+
+
+def container_choices(info, audio_only=False):
+    """[(label, container)] for the Format list; "" = whatever the site's best format is."""
+    video, audio = format_summary(info) if info else ({}, [])
+    if audio_only:
+        choices = [("Automatic (best audio)", "")]
+        choices += [(f"{ext_name(e)}  ·  offered by the site", e) for e in audio]
+        return choices
+    choices = [("Automatic (best quality)", "")]
+    for e, (_lo, hi) in video.items():
+        choices.append((f"{ext_name(e)}  ·  offered by the site  ·  up to {hi}p", e))
+    for e in ("mp4", "mkv"):
+        if e not in video:
+            choices.append((f"{ext_name(e)}  ·  repackaged, same quality", e))
+    return choices
+
+
+def container_args(container, audio_only=False):
+    """yt-dlp options that make the download come out as `container`."""
+    c = (container or "").lower()
+    if not c or audio_only:
+        return ["--merge-output-format", "mp4/mkv"]
+    # The site's own files of that type first (no repackaging needed), then the best resolution.
+    args = ["-S", f"ext:{c}:m4a" if c == "mp4" else f"ext:{c}:{c}" if c == "webm" else f"ext:{c}"]
+    if c in MERGEABLE:
+        args += ["--merge-output-format", c, "--remux-video", c]
+    else:
+        args += ["--merge-output-format", "mp4/mkv"]
+    return args
+
+
+def audio_selector(container):
+    """Format selector for "Audio only" in a chosen file type."""
+    return f"ba[ext={container}]/ba/b" if container else "ba[ext=m4a]/ba/b"
+
+
+def parse_time(text):
+    """Seconds from "1:02:03", "2:05", "75" or "1:20.5"; None when it isn't a time."""
+    text = (text or "").strip().replace("٫", ".").translate(str.maketrans("۰۱۲۳۴۵۶۷۸۹", "0123456789"))
+    if not text:
+        return None
+    parts = text.split(":")
+    if len(parts) > 3:
+        return None
+    try:
+        values = [float(p) for p in parts]
+    except ValueError:
+        return None
+    if any(v < 0 for v in values) or any(v >= 60 for v in values[1:]):
+        return None
+    total = 0.0
+    for v in values:
+        total = total * 60 + v
+    return total
+
+
+def format_time(seconds):
+    seconds = max(0, int(round(seconds)))
+    h, m, s = seconds // 3600, seconds % 3600 // 60, seconds % 60
+    return f"{h}:{m:02}:{s:02}" if h else f"{m}:{s:02}"
+
+
+def clip_args(item):
+    if not item.is_clip:
+        return []
+    start = max(0.0, item.clip_start)
+    end = "inf" if item.clip_end < 0 else f"{item.clip_end:g}"
+    return ["--download-sections", f"*{start:g}-{end}"]
+
+
+def clip_suffix(item):
+    """" (clip 1m20s-2m05s)": a clip doesn't take the full video's name."""
+    def stamp(t):
+        t = int(t)
+        h, m, s = t // 3600, t % 3600 // 60, t % 60
+        return f"{h}h{m:02}m{s:02}s" if h else f"{m}m{s:02}s"
+    end = "end" if item.clip_end < 0 else stamp(item.clip_end)
+    return f" (clip {stamp(max(0, item.clip_start))}-{end})"
+
+
 def _fsize(f, duration=0):
     size = f.get("filesize") or f.get("filesize_approx")
     if not size and f.get("tbr") and duration:
@@ -416,6 +536,8 @@ class MediaTask:
         name = sanitize_filename(clean_page_title(it.title), "") or "%(title).150B"
         if name.lower().endswith((".mp4", ".mkv", ".webm", ".m4a", ".mp3")):
             name = name.rsplit(".", 1)[0]
+        if it.is_clip and "(clip " not in name:
+            name += clip_suffix(it)
         error = self._try(cmd, name, it.url)
         fallback = _page_fallback(it, error)
         if fallback:
@@ -451,7 +573,7 @@ class MediaTask:
         args = cmd + [
             "--newline", "--progress", "--no-color", "--no-playlist", "--no-mtime",
             "-f", it.media_format or "bv*+ba/b",
-            "--merge-output-format", "mp4/mkv",
+        ] + container_args(it.container, (it.media_format or "").startswith("ba")) + clip_args(it) + [
             "-N", str(max(1, min(it.max_segments, 16))),
             "-P", it.folder, "-o", name + ".%(ext)s",
             "--progress-template", PROGRESS,

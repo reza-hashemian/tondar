@@ -41,6 +41,32 @@
         .note { padding: 8px 10px; opacity: .8; }
         .err { color: #ff8787; }
         .ok { color: #8ce99a; }
+        .opts { position: sticky; bottom: -6px; margin: 6px -6px -6px; padding: 10px 12px 12px;
+          background: #1b1b1e; border-top: 1px solid rgba(255,255,255,.08); border-radius: 0 0 12px 12px; }
+        .opt-title { font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; opacity: .55;
+          margin: 0 0 6px; }
+        .clip-head { display: flex; align-items: center; gap: 8px; cursor: pointer; font-weight: 600; }
+        .clip-head input { accent-color: #f76707; width: 15px; height: 15px; margin: 0; }
+        .clip-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px; }
+        .clip-row[hidden] { display: none; }
+        .field { display: flex; flex-direction: column; gap: 3px; }
+        .field span { font-size: 11px; opacity: .6; }
+        .field div { display: flex; gap: 4px; }
+        .field input { flex: 1; min-width: 0; padding: 6px 8px; border-radius: 7px; border: 1px solid rgba(255,255,255,.14);
+          background: #2c2c30; color: #fff; font-variant-numeric: tabular-nums; }
+        .field input:focus { outline: 2px solid #f76707; outline-offset: -1px; }
+        .field input.bad { border-color: #ff6b6b; }
+        .now { padding: 0 8px; border-radius: 7px; border: 0; background: #3a3a3f; color: #eee; cursor: pointer; font-size: 11.5px; }
+        .now:hover { background: #4a4a50; }
+        .hint { grid-column: 1 / -1; font-size: 11px; opacity: .55; }
+        .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; align-items: center; }
+        .chips .opt-title { margin: 0 4px 0 0; }
+        .chip { padding: 4px 10px; border-radius: 999px; border: 1px solid rgba(255,255,255,.16); background: none;
+          color: #ddd; cursor: pointer; font-size: 12px; }
+        .chip:hover { background: rgba(255,255,255,.08); }
+        .chip.on { background: linear-gradient(135deg, #f76707, #e03131); border-color: transparent; color: #fff; font-weight: 600; }
+        .opt-err { color: #ff8787; font-size: 12px; margin-top: 8px; }
+        .opt-err:empty { display: none; }
       </style>
       <div class="bar">
         <button class="btn" title="Download with Tondar">
@@ -64,6 +90,10 @@
     }
     bar.addEventListener("mouseenter", () => clearTimeout(hideTimer));
     menu.addEventListener("mouseenter", () => clearTimeout(hideTimer));
+    // Typing a time must not reach the page: video sites use digits and letters as shortcuts.
+    for (const type of ["keydown", "keyup", "keypress", "mousedown", "pointerdown", "click", "dblclick", "wheel"]) {
+      menu.addEventListener(type, (e) => e.stopPropagation());
+    }
     menu.addEventListener("mouseleave", scheduleHide);
     attach();
   }
@@ -252,14 +282,193 @@
 
   // The right-click menu lives in the background script, which can't see what was clicked.
   let menuPostUrl = "";
-  document.addEventListener("contextmenu", (e) => {
+  let menuTarget = null;
+  const FILE_EXT = /\.(zip|rar|7z|tar|gz|bz2|xz|zst|tgz|iso|exe|msi|dmg|pkg|deb|rpm|apk|appimage|pdf|docx?|xlsx?|pptx?|epub|mp4|m4v|mkv|webm|mov|avi|flv|wmv|3gp|mp3|m4a|aac|flac|wav|ogg|opus|torrent|bin|img)$/i;
+  const URL_ATTRS = ["data-href", "data-url", "data-download", "data-download-url", "data-downloadurl", "data-file",
+    "data-file-url", "data-link", "data-src", "href", "formaction"];
+
+  // Download buttons that aren't links (<button data-url=…>, onclick="location='…/file.zip'"):
+  // the browser only offers its page menu for them, so find their file here.
+  function downloadTarget(start) {
+    let n = 0;
+    for (let e = start; e && e.nodeType === 1 && n < 6; e = e.parentElement || (e.getRootNode && e.getRootNode().host), n++) {
+      if (e.matches && e.matches("a[href]")) return null; // the browser's link menu handles it
+      const candidates = [];
+      for (const a of URL_ATTRS) {
+        const v = e.getAttribute && e.getAttribute(a);
+        if (v) candidates.push([v, /download/i.test(a)]);
+      }
+      const onclick = e.getAttribute && e.getAttribute("onclick");
+      if (onclick) {
+        const m = /(?:location(?:\.href)?\s*=|window\.open\(|\.assign\()\s*['"]([^'"]+)['"]/.exec(onclick) || /['"](https?:\/\/[^'"\s]+)['"]/.exec(onclick);
+        if (m) candidates.push([m[1], false]);
+      }
+      if (e.form && e.form.method && e.form.method.toLowerCase() === "get" && e.form.action) candidates.push([e.form.action, false]);
+      const words = ((e.textContent || "").slice(0, 80) + " " + (e.getAttribute && (e.getAttribute("aria-label") || e.getAttribute("title")) || "")).toLowerCase();
+      const says = /download|دانلود|بارگیری|herunterladen|télécharger|descargar|indir|скачать/.test(words);
+      for (const [raw, named] of candidates) {
+        let u;
+        try { u = new URL(raw, location.href); } catch (err) { continue; }
+        if (!/^https?:$/.test(u.protocol) || u.href === location.href) continue;
+        if (named || says || FILE_EXT.test(u.pathname)) return { url: u.href };
+      }
+    }
+    return null;
+  }
+
+  function rememberTarget(e) {
     const el = e.composedPath()[0];
-    menuPostUrl = permalink(el instanceof Element ? el : null);
+    const node = el instanceof Element ? el : null;
+    menuPostUrl = permalink(node);
+    menuTarget = downloadTarget(node);
+    return menuTarget;
+  }
+  // The right button goes down before the menu opens: name the menu entry after what's under the mouse.
+  document.addEventListener("mousedown", (e) => {
+    if (e.button !== 2) return;
+    const t = rememberTarget(e);
+    chrome.runtime.sendMessage({ type: "menuTarget", found: !!t }).catch(() => {});
   }, true);
+  document.addEventListener("contextmenu", rememberTarget, true);
+
+  let toastBox = null, toastTimer = null;
+  function toast(text, ok) {
+    if (!toastBox) {
+      toastBox = document.createElement("tondar-toast");
+      toastBox.style.cssText = "all:initial;position:fixed;right:20px;bottom:20px;z-index:2147483647;";
+      const r = toastBox.attachShadow({ mode: "closed" });
+      r.innerHTML = `<style>
+        div { font: 600 13px/1.35 system-ui, "Vazirmatn", sans-serif; color: #fff; background: #232326; padding: 10px 16px 10px 12px;
+          border-radius: 12px; box-shadow: 0 8px 30px rgba(0,0,0,.45); display: flex; gap: 10px; align-items: center;
+          border: 1px solid rgba(255,255,255,.08); max-width: 380px; transition: opacity .2s, transform .2s; }
+        i { font-style: normal; display: inline-flex; width: 22px; height: 22px; border-radius: 50%; align-items: center;
+          justify-content: center; flex: none; background: linear-gradient(135deg, #f76707, #e03131); }
+        div.bad i { background: #c92a2a; }
+      </style><div><i></i><span></span></div>`;
+      toastBox._div = r.querySelector("div");
+    }
+    toastBox._div.className = ok ? "" : "bad";
+    toastBox._div.querySelector("i").textContent = ok ? "✓" : "!";
+    toastBox._div.querySelector("span").textContent = text;
+    (document.fullscreenElement || document.documentElement).appendChild(toastBox);
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => toastBox.remove(), ok ? 2500 : 5000);
+  }
+
   chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-    if (msg.type === "postUrl") sendResponse({ postUrl: menuPostUrl });
+    if (msg.type === "postUrl") sendResponse({ postUrl: menuPostUrl, target: menuTarget });
     else if (msg.type === "scan") sendResponse({ found: scanPage() });
+    else if (msg.type === "toast") { toast(msg.text, msg.ok); sendResponse({ ok: true }); }
   });
+
+  // ---------------------------------------------------------------------------
+  // Options under the list: only a part of the video, and the file type to save.
+  const opts = { clip: false, start: "", end: "", container: "", audio: false };
+  const FORMATS = [["", "Auto"], ["mp4", "MP4"], ["mkv", "MKV"], ["webm", "WebM"], ["m4a", "Audio only"]];
+
+  function fmtTime(t) {
+    t = Math.max(0, Math.round(t || 0));
+    const h = Math.floor(t / 3600), m = Math.floor((t % 3600) / 60), s = t % 60;
+    return (h ? h + ":" + String(m).padStart(2, "0") : String(m)) + ":" + String(s).padStart(2, "0");
+  }
+
+  function parseTime(text) {
+    text = (text || "").trim().replace(/[۰-۹]/g, (d) => String("۰۱۲۳۴۵۶۷۸۹".indexOf(d))).replace("٫", ".");
+    if (!text) return null;
+    const parts = text.split(":");
+    if (parts.length > 3) return NaN;
+    let t = 0;
+    for (let i = 0; i < parts.length; i++) {
+      if (!/^\d+(\.\d+)?$/.test(parts[i])) return NaN;
+      const v = Number(parts[i]);
+      if (i > 0 && v >= 60) return NaN;
+      t = t * 60 + v;
+    }
+    return t;
+  }
+
+  function el(tag, cls, text) {
+    const e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text != null) e.textContent = text;
+    return e;
+  }
+
+  let optErr = null;
+  function optionsPanel() {
+    const box = el("div", "opts");
+    const head = el("label", "clip-head");
+    const check = el("input");
+    check.type = "checkbox";
+    check.checked = opts.clip;
+    head.append(check, el("span", "", "✂  Download only a part"));
+    const row = el("div", "clip-row");
+    row.hidden = !opts.clip;
+    const field = (label, key, placeholder) => {
+      const f = el("label", "field");
+      const input = el("input");
+      input.placeholder = placeholder;
+      input.value = opts[key];
+      input.inputMode = "decimal";
+      input.addEventListener("input", () => { opts[key] = input.value; input.classList.remove("bad"); optErr.textContent = ""; });
+      const now = el("button", "now", "Now");
+      now.title = "Use the video's current time";
+      now.addEventListener("click", (e) => {
+        e.preventDefault();
+        if (video) { input.value = opts[key] = fmtTime(video.currentTime); input.classList.remove("bad"); }
+      });
+      const line = el("div");
+      line.append(input, now);
+      f.append(el("span", "", label), line);
+      return [f, input];
+    };
+    const [fromField, fromInput] = field("From", "start", "0:00");
+    const [toField, toInput] = field("To", "end", "end");
+    const length = video && isFinite(video.duration) && video.duration > 0 ? "Video length " + fmtTime(video.duration) + " · " : "";
+    row.append(fromField, toField, el("div", "hint", length + "Times like 1:20 or 1:02:03"));
+    check.addEventListener("change", () => {
+      opts.clip = check.checked;
+      row.hidden = !opts.clip;
+      if (opts.clip && !opts.start && video && video.currentTime > 1) {
+        fromInput.value = opts.start = fmtTime(video.currentTime); // start where the video is now
+      }
+      if (opts.clip) (opts.start ? toInput : fromInput).focus();
+      place();
+    });
+    const chips = el("div", "chips");
+    chips.append(el("div", "opt-title", "Format"));
+    for (const [value, label] of FORMATS) {
+      const c = el("button", "chip" + ((value === "m4a" ? opts.audio : !opts.audio && opts.container === value) ? " on" : ""), label);
+      c.title = value === "m4a" ? "Only the sound" : value ? "Save as " + label + " (the Tondar window shows what the site offers)" : "Whatever is best on the site";
+      c.addEventListener("click", (e) => {
+        e.preventDefault();
+        opts.audio = value === "m4a";
+        opts.container = value;
+        for (const x of chips.querySelectorAll(".chip")) x.classList.toggle("on", x === c);
+      });
+      chips.append(c);
+    }
+    optErr = el("div", "opt-err");
+    box.append(head, row, chips, optErr);
+    box._inputs = [fromInput, toInput];
+    return box;
+  }
+
+  // The options as fields of the download request, or {error}.
+  function chosenOptions(panel) {
+    const extra = {};
+    if (opts.clip) {
+      const start = parseTime(opts.start), end = parseTime(opts.end);
+      const [fromInput, toInput] = panel._inputs;
+      if (Number.isNaN(start)) { fromInput.classList.add("bad"); return { error: "Write the start like 1:20" }; }
+      if (Number.isNaN(end)) { toInput.classList.add("bad"); return { error: "Write the end like 2:05 (or leave it empty)" }; }
+      if (end != null && end <= (start || 0)) { toInput.classList.add("bad"); return { error: "The end must come after the start" }; }
+      if (start || end != null) extra.clip = { start: start || 0, end: end == null ? -1 : end };
+    }
+    if (opts.container) extra.container = opts.container;
+    if (opts.audio) extra.audio = true;
+    return { extra };
+  }
 
   async function onClick(e) {
     e.preventDefault();
@@ -278,6 +487,7 @@
       return note("Tondar app is not installed or not reachable. Install Tondar and open it once.", "err");
     }
     menu.innerHTML = "";
+    const panel = optionsPanel();
     for (const opt of res.options) {
       const b = document.createElement("button");
       b.className = "item";
@@ -290,10 +500,12 @@
       b.append(l, s);
       b.addEventListener("click", async (ev) => {
         ev.stopPropagation();
+        const chosen = chosenOptions(panel);
+        if (chosen.error) { optErr.textContent = chosen.error; return; }
         note("Sending to Tondar…");
         let r;
         try {
-          r = await chrome.runtime.sendMessage({ type: "download", req: opt.req });
+          r = await chrome.runtime.sendMessage({ type: "download", req: { ...opt.req, ...chosen.extra } });
         } catch (err) {
           r = { ok: false, error: "Extension was updated — reload this page." };
         }
@@ -302,6 +514,7 @@
       });
       menu.appendChild(b);
     }
+    menu.appendChild(panel);
     place();
   }
 })();

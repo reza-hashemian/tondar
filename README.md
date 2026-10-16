@@ -102,7 +102,9 @@ The Firefox add-on is signed by Mozilla, so it installs in regular Firefox.
   You can also drag a link onto the window.
 - **Download Later** adds it paused; **Schedule** adds it to the scheduler; **Start Download** starts now.
 - With the extension, clicking a download link in the browser opens Tondar's **New Download**
-  window instead of the browser's download. Right-click any link → **Download link with Tondar**.
+  window instead of the browser's download.
+- **Right-click** any link (or a video, audio or picture) → **Download with Tondar**. On a download
+  button that isn't a real link, the page entry turns into **Download with Tondar** too.
 - To let the browser download normally again, click the Tondar toolbar icon and untick
   **Take over browser downloads**.
 
@@ -118,7 +120,31 @@ The Firefox add-on is signed by Mozilla, so it installs in regular Firefox.
   (**Audio only** is at the bottom of the list).
 - For a playlist link, every video is listed with a checkbox. The videos are saved in a folder named
   after the playlist, numbered in order. Turn off **Download entire playlist** to get only one video.
+- **Format:** the **Format** row lists the containers the site offers (MP4, WebM, …, shown under
+  **Formats on this site**) and MKV/MP4 repackaging at the same quality. On the page, the orange
+  button's menu has the same choice under **Format** (Auto / MP4 / MKV / WebM / Audio only).
+- **Only a part of a video:** turn on **Download only a part** (✂ in the orange button's menu) and fill in **From** and **To**
+  (`1:20`, `90`, `1:02:03`; leave **To** empty for "until the end"). On the page, the **Now** buttons
+  take the player's current time. The clip gets its own name, e.g. `Video (clip 1m20s-2m05s).mp4`.
+  The cut starts at the nearest key frame, so it can begin a second or two early.
 - Sites change often: if videos stop working, use ☰ → **Install / Update yt-dlp**.
+
+**Progress and "Download Complete" windows**
+- Every download you start gets a small window of its own: percent, speed, time left, size,
+  folder, and **Pause / Resume**, **Cancel** and **Hide**. ⋮ → **Progress Window** opens it again.
+- When it finishes, **Download Complete** offers **Open**, **Open Folder** and **Close**.
+- Both can be turned off in Preferences (**Show a progress window**,
+  **Show a window when a download finishes**).
+
+**Clone a website** (the 🌐 button at the top, ☰ → **Clone Website…**, Ctrl+Shift+N, or right-click a
+page → **Clone this website with Tondar**)
+- Enter the address and choose **Pages** (the whole website, this page only, or 1–3 clicks deep),
+  **At most** N pages, pictures/styles/fonts from other servers (CDNs), the files the pages link to
+  (PDF, ZIP…), a size limit per file, and **Respect robots.txt**.
+- Pick the folder and name; links are rewritten so the copy opens offline in a browser
+  (**Open Website** opens its first page). Pause / resume works like for files; files that could not be
+  saved are listed in `_tondar-failed.txt`.
+- Sites that build their pages with JavaScript (web apps) can only be copied as far as their HTML goes.
 
 **Managing downloads**
 - ▶ / ⏸ on each row resumes or pauses; the buttons at the top resume or pause everything.
@@ -154,6 +180,7 @@ The Firefox add-on is signed by Mozilla, so it installs in regular Firefox.
 - **Simultaneous downloads**, **Connections per download** (more is usually faster), **Speed limit**
 - **Keep running when window is closed**, **Start on login**,
   **Ask before downloading from the browser**, notifications
+- **Show a progress window**, **Show a window when a download finishes**
 
 ## Troubleshooting
 
@@ -266,7 +293,8 @@ sudo apt install ./tondar_*_all.deb ffmpeg
 **اضافه کردن دانلود**
 - دکمه‌ی **+** یا Ctrl+N رو بزن و لینک رو بده. اگه لینکی کپی کرده باشی، خودش پر می‌شه. می‌تونی لینک رو بکشی و روی پنجره رها کنی.
 - **Download Later** دانلود رو متوقف اضافه می‌کنه، **Schedule** اون رو به زمان‌بندی اضافه می‌کنه و **Start Download** همون موقع شروعش می‌کنه.
-- وقتی افزونه نصب باشه، کلیک روی لینک دانلود توی مرورگر به‌جای دانلود مرورگر، پنجره‌ی **New Download** تندر رو باز می‌کنه. با راست‌کلیک روی هر لینک هم گزینه‌ی **Download link with Tondar** میاد.
+- وقتی افزونه نصب باشه، کلیک روی لینک دانلود توی مرورگر به‌جای دانلود مرورگر، پنجره‌ی **New Download** تندر رو باز می‌کنه. 
+- با **راست‌کلیک** روی هر لینک (یا ویدیو، صدا و عکس) گزینه‌ی **Download with Tondar** میاد. روی دکمه‌های دانلودی که لینک واقعی نیستن هم همین گزینه نشون داده می‌شه.
 - اگه می‌خوای مرورگر دوباره خودش دانلود کنه، روی آیکون تندر توی نوار ابزار بزن و تیک **Take over browser downloads** رو بردار.
 
 **ویدیو و پلی‌لیست**
@@ -275,7 +303,19 @@ sudo apt install ./tondar_*_all.deb ffmpeg
 - موس رو روی ویدیوی هر سایتی ببر و دکمه‌ی نارنجی **Download** رو بزن. لیست فایل‌ها و استریم‌های ویدیوی اون صفحه رو نشون می‌ده، به‌علاوه‌ی گزینه‌ی **Best quality (yt-dlp)**.
 - یا لینک یوتیوب، آپارات، اینستاگرام و… رو بده، **Type** رو روی **Video / stream** بذار و کیفیت رو انتخاب کن. گزینه‌ی **Audio only** (فقط صدا) آخر لیسته.
 - برای لینک پلی‌لیست، همه‌ی ویدیوها با تیک نشون داده می‌شن. ویدیوها توی پوشه‌ای به اسم پلی‌لیست و به ترتیب شماره‌گذاری ذخیره می‌شن. اگه فقط یه ویدیو می‌خوای، **Download entire playlist** رو خاموش کن.
+- **فرمت:** ردیف **Format** فرمت‌هایی که سایت داره (MP4، WebM و…، زیر **Formats on this site**) و تبدیل بدون افت کیفیت به MKV/MP4 رو نشون می‌ده. توی صفحه هم پایین منوی دکمه‌ی نارنجی، زیر **Format** همین انتخاب هست (Auto / MP4 / MKV / WebM / Audio only).
+- **دانلود فقط یه تیکه از ویدیو:** **Download only a part** (توی منوی دکمه‌ی نارنجی با علامت ✂) رو روشن کن و **From** و **To** رو بنویس (مثلاً `1:20`، `90` یا `1:02:03`؛ اگه **To** خالی باشه تا آخر ویدیو). توی صفحه دکمه‌ی **Now** زمان فعلی پخش‌کننده رو برمی‌داره. اسم فایل جدا می‌شه، مثل `Video (clip 1m20s-2m05s).mp4`. برش از نزدیک‌ترین کی‌فریم شروع می‌شه، پس ممکنه یکی دو ثانیه زودتر شروع بشه.
 - سایت‌ها زیاد تغییر می‌کنن. اگه دانلود ویدیو کار نکرد، از ☰ گزینه‌ی **Install / Update yt-dlp** رو بزن.
+
+**پنجره‌ی پیشرفت و «Download Complete»**
+- هر دانلودی که شروع کنی یه پنجره‌ی کوچیک جدا داره: درصد، سرعت، زمان باقی‌مونده، حجم، پوشه و دکمه‌های **Pause / Resume**، **Cancel** و **Hide**. از ⋮ و **Progress Window** دوباره باز می‌شه.
+- وقتی تموم شد، پنجره‌ی **Download Complete** سه گزینه داره: **Open** (باز کردن فایل)، **Open Folder** (باز کردن پوشه) و **Close**.
+- هر دو رو می‌تونی توی Preferences خاموش کنی (**Show a progress window** و **Show a window when a download finishes**).
+
+**کپی کامل سایت (Clone Website)** — دکمه‌ی 🌐 بالای پنجره، یا ☰ و **Clone Website…**، یا Ctrl+Shift+N، یا راست‌کلیک روی صفحه و **Clone this website with Tondar**
+- آدرس رو بده و انتخاب کن: **Pages** (کل سایت، فقط همین صفحه، یا ۱ تا ۳ کلیک عمق)، **At most** (حداکثر تعداد صفحه)، عکس/استایل/فونت از سرورهای دیگه (CDN)، فایل‌هایی که صفحه‌ها بهشون لینک دادن (PDF، ZIP و…)، محدودیت حجم هر فایل، و **Respect robots.txt**.
+- پوشه و اسم رو انتخاب کن. لینک‌ها طوری بازنویسی می‌شن که نسخه‌ی کپی بدون اینترنت توی مرورگر باز بشه (**Open Website** صفحه‌ی اولش رو باز می‌کنه). توقف و ادامه مثل فایل‌ها کار می‌کنه و فایل‌هایی که ذخیره نشدن توی `_tondar-failed.txt` لیست می‌شن.
+- سایت‌هایی که صفحه‌هاشون رو با جاوااسکریپت می‌سازن (وب‌اپ‌ها) فقط تا جایی که HTML دارن کپی می‌شن.
 
 **مدیریت دانلودها**
 - دکمه‌ی ▶ یا ⏸ هر ردیف دانلود رو ادامه می‌ده یا متوقف می‌کنه. دکمه‌های بالای پنجره همه رو با هم. دانلودها از همون‌جایی که موندن ادامه پیدا می‌کنن، حتی بعد از ری‌استارت.
@@ -308,6 +348,7 @@ sudo apt install ./tondar_*_all.deb ffmpeg
 - **Remember the folder I choose**: وقتی توی پنجره‌ی New Download پوشه‌ای رو دستی انتخاب کنی، دانلودهای بعدی هم همون‌جا ذخیره می‌شن. با دکمه‌ی ↶ کنارش یا **Forget** به پوشه‌ی پیش‌فرض برمی‌گرده.
 - **Simultaneous downloads**: تعداد دانلود هم‌زمان. **Connections per download**: تعداد اتصال هر دانلود، که بیشترش معمولاً سریع‌تره. **Speed limit**: محدودیت سرعت.
 - **Keep running when window is closed**: کار کردن در پس‌زمینه. **Start on login**: اجرا موقع روشن شدن سیستم. **Ask before downloading from the browser**: پرسیدن قبل از دانلودهایی که از مرورگر میان. و نوتیفیکیشن‌ها.
+- **Show a progress window**: پنجره‌ی پیشرفت جدا برای هر دانلود. **Show a window when a download finishes**: پنجره‌ی Download Complete.
 
 ### رفع مشکل
 

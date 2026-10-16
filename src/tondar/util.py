@@ -26,6 +26,7 @@ CATEGORY_ICONS = {
     "Documents": "x-office-document",
     "Programs": "application-x-executable",
     "Other": "text-x-generic",
+    "Websites": "text-html",
 }
 
 

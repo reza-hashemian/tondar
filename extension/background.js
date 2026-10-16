@@ -59,6 +59,9 @@ async function sendToApp(req) {
     title: req.title || "",
     page_url: req.pageUrl || "",
     size: req.size || -1,
+    ...(req.clip && typeof req.clip === "object" ? { clip: { start: Number(req.clip.start) || 0, end: req.clip.end == null ? -1 : Number(req.clip.end) } } : {}),
+    ...(req.container ? { container: String(req.container) } : {}),
+    ...(req.audio ? { audio: true } : {}),
     user_agent: navigator.userAgent,
     cookies: await cookiesFor(req.url, req.kind === "media" ? req.pageUrl : null),
   };
@@ -283,6 +286,7 @@ async function optionsFor(tabId, frameUrl, videoSrc, postUrl, found) {
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   (async () => {
+    if (msg.type === "menuTarget") return { ok: true };
     if (msg.type === "options") {
       const tabId = msg.tabId ?? sender.tab?.id;
       // The popup has no page of its own: ask the tab's content script what the page shows.
@@ -317,13 +321,38 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
 // ---------------------------------------------------------------------------
 // Right-click menu
-chrome.runtime.onInstalled.addListener(() => {
+const PAGE_TITLE = "Download video on this page with Tondar";
+// One entry per context keeps "Download with Tondar" at the top level of the menu on links
+// (browsers fold two or more entries into a "Tondar" submenu).
+function createMenus() {
   chrome.contextMenus.removeAll(() => {
-    chrome.contextMenus.create({ id: "link", title: "Download link with Tondar", contexts: ["link"] });
-    chrome.contextMenus.create({ id: "media", title: "Download this media with Tondar", contexts: ["video", "audio"] });
-    chrome.contextMenus.create({ id: "page", title: "Download video on this page with Tondar", contexts: ["page", "frame"] });
+    chrome.contextMenus.create({ id: "link", title: "Download with Tondar", contexts: ["link"] });
+    chrome.contextMenus.create({ id: "media", title: "Download with Tondar", contexts: ["video", "audio", "image"] });
+    chrome.contextMenus.create({ id: "page", title: PAGE_TITLE, contexts: ["page", "frame"] });
+    chrome.contextMenus.create({ id: "clone", title: "Clone this website with Tondar", contexts: ["page"] });
   });
+}
+chrome.runtime.onInstalled.addListener(createMenus);
+chrome.runtime.onStartup.addListener(createMenus);
+
+// The content script tells us what is under the mouse before the menu opens: a download
+// button that isn't a link gets "Download with Tondar" instead of the page entry.
+let pageTitle = PAGE_TITLE;
+chrome.runtime.onMessage.addListener((msg) => {
+  if (msg && msg.type === "menuTarget") {
+    const title = msg.found ? "Download with Tondar" : PAGE_TITLE;
+    if (title !== pageTitle) {
+      pageTitle = title;
+      chrome.contextMenus.update("page", { title }, () => void chrome.runtime.lastError);
+    }
+  }
+  return false;
 });
+
+function tell(tab, frameId, text, ok) {
+  if (!tab || tab.id < 0) return;
+  chrome.tabs.sendMessage(tab.id, { type: "toast", text, ok }, { frameId: frameId || 0 }).catch(() => {});
+}
 
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   const pageUrl = info.pageUrl || (tab && tab.url) || "";
@@ -331,19 +360,28 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   let req;
   if (info.menuItemId === "link") req = { url: info.linkUrl, kind: "http", referer: pageUrl, pageUrl };
   else if (info.menuItemId === "media" && /^https?:/i.test(info.srcUrl || "")) req = { url: info.srcUrl, kind: "http", referer: pageUrl, pageUrl, title };
+  else if (info.menuItemId === "clone") req = { url: pageUrl, kind: "site", title };
   else {
-    // In a feed the page isn't the video: ask the content script which post was clicked.
-    let postUrl = "";
-    if (tab && !info.frameId) {
-      const r = await chrome.tabs.sendMessage(tab.id, { type: "postUrl" }, { frameId: 0 }).catch(() => null);
-      if (r && /^https:/i.test(r.postUrl || "")) postUrl = r.postUrl;
+    // In a feed the page isn't the video: ask the content script which post (or download button) was clicked.
+    let postUrl = "", target = null;
+    if (tab) {
+      const r = await chrome.tabs.sendMessage(tab.id, { type: "postUrl" }, { frameId: info.frameId || 0 }).catch(() => null);
+      if (r && r.target && /^https?:/i.test(r.target.url || "")) target = r.target;
+      if (!info.frameId && r && /^https:/i.test(r.postUrl || "")) postUrl = r.postUrl;
     }
-    if (postUrl) req = { url: postUrl, kind: "media", referer: postUrl, pageUrl: postUrl, title: "" };
+    if (target) req = { url: target.url, kind: "http", referer: info.frameUrl || pageUrl, pageUrl };
+    else if (postUrl) req = { url: postUrl, kind: "media", referer: postUrl, pageUrl: postUrl, title: "" };
     else req = { url: info.frameUrl || pageUrl, kind: "media", referer: pageUrl, pageUrl, title };
+  }
+  if (!req.url || !/^https?:/i.test(req.url)) {
+    tell(tab, info.frameId, "Tondar can only download http and https links", false);
+    return;
   }
   try {
     await sendToApp(req);
+    tell(tab, info.frameId, req.kind === "site" ? "Sent to Tondar: choose how to clone the site" : "Sent to Tondar", true);
   } catch (e) {
     console.warn("Tondar:", e.message);
+    tell(tab, info.frameId, e.message, false);
   }
 });

@@ -13,7 +13,8 @@ from gi.repository import Adw, Gio, GLib, Gtk  # noqa: E402
 
 from . import APP_ID, VERSION, ipc  # noqa: E402
 from .core import COMPLETED, Item, Manager  # noqa: E402
-from .dialogs import AddWindow, BrowserDialog, PreferencesDialog  # noqa: E402
+from .dialogs import AddWindow, BrowserDialog, CloneWindow, PreferencesDialog  # noqa: E402
+from .popups import CompleteWindow, ProgressWindow  # noqa: E402
 from .util import MACOS, WINDOWS, looks_like_media_page, sanitize_filename, unique_path  # noqa: E402
 from .window import MainWindow, bring_to_front, open_folder, open_uri  # noqa: E402
 
@@ -26,12 +27,14 @@ class App(Adw.Application):
         super().__init__(application_id=APP_ID, flags=flags)
         self.manager = None
         self.window = None
+        self.progress_windows = {}  # item id -> ProgressWindow
         GLib.set_application_name("Tondar")
 
     def do_startup(self):
         Adw.Application.do_startup(self)
         self.manager = Manager(lambda fn, *a: GLib.idle_add(fn, *a))
         self.manager.on_finished.append(self._on_finished)
+        self.manager.on_removed.append(self._close_progress)
         self.manager.on_schedule_started.append(self._on_schedule_started)
         self.manager.on_schedule_done.append(self._on_schedule_done)
         self._shutdown_timer = 0
@@ -46,6 +49,7 @@ class App(Adw.Application):
 
         for name, cb, accels in [
             ("add", lambda *_: self.open_add_dialog({}), ["<Primary>n"]),
+            ("clone", lambda *_: self.open_clone_dialog(""), ["<Primary><Shift>n"]),
             ("start-all", lambda *_: self.manager.start_all(), []),
             ("pause-all", lambda *_: self.manager.pause_all(), []),
             ("clear-completed", lambda *_: self._clear_completed(), []),
@@ -64,7 +68,8 @@ class App(Adw.Application):
             if accels:
                 self.set_accels_for_action(f"app.{name}", accels)
 
-        for name, cb in [("open-item", self._open_item), ("open-item-folder", self._open_item_folder)]:
+        for name, cb in [("open-item", self._open_item), ("open-item-folder", self._open_item_folder),
+                         ("show-progress", self._show_progress_action)]:
             action = Gio.SimpleAction.new(name, GLib.VariantType.new("s"))
             action.connect("activate", cb)
             self.add_action(action)
@@ -116,12 +121,40 @@ class App(Adw.Application):
         bring_to_front(AddWindow(self, request))
         return False
 
+    def open_clone_dialog(self, url):
+        bring_to_front(CloneWindow(self, url))
+        return False
+
+    def show_progress(self, item, force=False):
+        """The window that follows one download (also opened from the list with "Progress Window")."""
+        if not force and not self.manager.settings.get("progress_window", True):
+            return
+        win = self.progress_windows.get(item.id)
+        if win is None:
+            win = ProgressWindow(self, item)
+            self.progress_windows[item.id] = win
+            win.connect("close-request", lambda w, i=item.id: self.progress_windows.pop(i, None) and False)
+        bring_to_front(win)
+
+    def _close_progress(self, item):
+        win = self.progress_windows.pop(item.id, None)
+        if win:
+            win.close()
+
+    def _show_progress_action(self, _a, param):
+        item = self._find(param.get_string())
+        if item:
+            self.show_progress(item, force=True)
+
     def handle_request(self, req):
         """A link sent from the browser extension (or the command line)."""
         url = (req.get("url") or "").strip()
         if not url:
             return
-        media = req.get("kind") == "media" or looks_like_media_page(url)
+        if req.get("kind") == "site":
+            self.open_clone_dialog(url)
+            return
+        media = req.get("kind") == "media" or looks_like_media_page(url) or req.get("clip") or req.get("container")
         if self.manager.settings["confirm_browser"] or media:  # videos always need a quality choice
             self.open_add_dialog(req)
             return
@@ -130,12 +163,16 @@ class App(Adw.Application):
         item = Item(
             url=url, kind="http", referer=req.get("referer", ""), user_agent=req.get("user_agent", ""),
             cookies=req.get("cookies", []), page_url=req.get("page_url", ""),
-            max_segments=int(m.settings["segments"]), size=int(req.get("size") or -1),
+            max_segments=int(m.settings["segments"]), size=int(req.get("size") or -1), popup=True,
         )
         item.folder, item.auto_folder = m.pick_folder(name or url)
         if name:
             item.filename = unique_path(item.folder, name, m.taken_paths())
         added = m.add(item, start=True)
+        if added is item and m.settings.get("progress_window", True):
+            self.present_main()
+            self.show_progress(item)
+            return
         win = self.present_main()
         bring_to_front(win)  # show the new download in the list
         if added is not item:
@@ -145,7 +182,7 @@ class App(Adw.Application):
     def _tick(self):
         # An exception escaping a GLib timeout removes it for good: downloads would sit in
         # "Waiting in queue" and the window would stop updating.
-        for step in (self.manager.tick, self._refresh_window):
+        for step in (self.manager.tick, self._refresh_window, self._refresh_progress):
             try:
                 step()
             except Exception:  # noqa: BLE001
@@ -155,6 +192,13 @@ class App(Adw.Application):
     def _refresh_window(self):
         if self.window and self.window.get_visible():
             self.window.refresh()
+
+    def _refresh_progress(self):
+        for win in list(self.progress_windows.values()):
+            try:
+                win.refresh()
+            except Exception:  # noqa: BLE001 - one window must not stop the others
+                traceback.print_exc()
 
     # --- notifications -------------------------------------------------------------------------
     def _notify(self, nid, title, body, item=None):
@@ -170,7 +214,12 @@ class App(Adw.Application):
         self.send_notification(nid, n)
 
     def _on_finished(self, item):
-        self._notify(f"done-{item.id}", "Download complete", item.display_name, item)
+        self._close_progress(item)
+        if item.popup and self.manager.settings.get("complete_window", True):
+            bring_to_front(CompleteWindow(self, item))
+            return
+        title = "Website saved" if item.kind == "site" else "Download complete"
+        self._notify(f"done-{item.id}", title, item.display_name, item)
 
     # --- scheduler -----------------------------------------------------------------------------
     def _on_schedule_started(self, count):
@@ -237,12 +286,14 @@ class App(Adw.Application):
 
     def _open_item(self, _a, param):
         item = self._find(param.get_string())
-        if item and item.status == COMPLETED and os.path.exists(item.path):
-            open_uri(item.path)
+        if item and item.status == COMPLETED and os.path.exists(item.open_path):
+            open_uri(item.open_path)
 
     def _open_item_folder(self, _a, param):
         item = self._find(param.get_string())
-        if item:
+        if item and item.kind == "site" and os.path.isdir(item.path):
+            open_uri(item.path)
+        elif item:
             open_folder(item.path if os.path.exists(item.path) else item.folder)
 
     # --- misc actions ---------------------------------------------------------------------------

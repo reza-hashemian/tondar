@@ -1,8 +1,12 @@
+import html
 import os
+import re
 import shutil
 import sys
 import threading
 import time
+import urllib.parse
+import urllib.request
 
 from gi.repository import Adw, Gio, GLib, Gtk
 
@@ -10,11 +14,15 @@ from . import APP_ID
 from .core import Item
 from .http_task import probe
 from .media import (
-    PLAYLIST_HINT, YTDLP_URL, find_page_media, install_ytdlp, is_playlist, playlist_choices, playlist_entries,
-    probe_media, ffmpeg_available, quality_choices, ytdlp_command, ytdlp_version,
+    PLAYLIST_HINT, YTDLP_URL, audio_selector, container_choices, describe_formats, find_page_media, format_time,
+    install_ytdlp, is_playlist, parse_time, playlist_choices, playlist_entries, probe_media, ffmpeg_available,
+    quality_choices, ytdlp_command, ytdlp_version,
 )
 from .net import display_proxy, test_proxy
-from .util import MACOS, WINDOWS, app_dir, clean_page_title, human_size, human_time, looks_like_media_page, sanitize_filename
+from .util import (
+    MACOS, WINDOWS, app_dir, category_for, clean_page_title, human_size, human_time, looks_like_media_page,
+    sanitize_filename,
+)
 from .window import show_in_folder
 
 MODES = ["File", "Video / stream (yt-dlp)"]
@@ -24,7 +32,7 @@ class AddWindow(Adw.Window):
     """The "new download" window (also shown for links sent from the browser)."""
 
     def __init__(self, app, request):
-        super().__init__(application=app, title="New Download", default_width=580, default_height=560)
+        super().__init__(application=app, title="New Download", default_width=580, default_height=700)
         self.app = app
         self.manager = app.manager
         self.request = request
@@ -41,6 +49,10 @@ class AddWindow(Adw.Window):
         self._probe_size = -1
         self._playlist = None  # (entries, check buttons) when a playlist was found
         self._videos_row = None
+        self._info = None  # what yt-dlp found out about the video
+        self._duration = 0
+        self._containers = [("Automatic (best quality)", "")]
+        self._want_container = request.get("container") or ""
 
         if app.window and app.window.get_visible():
             self.set_transient_for(app.window)
@@ -60,13 +72,21 @@ class AddWindow(Adw.Window):
         g1.add(self.mode_row)
 
         self.quality_row = Adw.ComboRow(title="Quality", model=Gtk.StringList.new(["Best quality"]), visible=False)
-        self.quality_row.connect("notify::selected", lambda *_: self._update_folder_row())
+        self.quality_row.connect("notify::selected", lambda *_: (self._update_format_choices(), self._update_folder_row()))
         g1.add(self.quality_row)
+
+        self.format_row = Adw.ComboRow(title="Format", subtitle="The type of file to save",
+                                       model=Gtk.StringList.new([c[0] for c in self._containers]), visible=False)
+        g1.add(self.format_row)
 
         self.info_row = Adw.ActionRow(title="Details", subtitle="Enter a link")
         self.spinner = Adw.Spinner(visible=False)
         self.info_row.add_suffix(self.spinner)
         g1.add(self.info_row)
+
+        self.formats_row = Adw.ActionRow(title="Formats on this site", subtitle_selectable=True, visible=False)
+        self.formats_row.add_prefix(Gtk.Image(icon_name="video-x-generic-symbolic"))
+        g1.add(self.formats_row)
 
         self.playlist_row = Adw.SwitchRow(
             title="Download entire playlist", subtitle="Otherwise only the video in the link", active=True, visible=False)
@@ -74,6 +94,25 @@ class AddWindow(Adw.Window):
         g1.add(self.playlist_row)
         self.g1 = g1
         page.add(g1)
+
+        # A part of the video only ("from 1:20 to 2:05")
+        gc = Adw.PreferencesGroup()
+        self.clip_row = Adw.ExpanderRow(title="Download only a part", subtitle="Choose where the clip starts and ends",
+                                        show_enable_switch=True, enable_expansion=False)
+        self.clip_row.add_prefix(Gtk.Image(icon_name="edit-cut-symbolic"))
+        self.clip_start_row = Adw.EntryRow(title="From  (for example 1:20)")
+        self.clip_end_row = Adw.EntryRow(title="To  (for example 2:05 — leave empty for the end)")
+        self.clip_hint = Adw.ActionRow(title="How it's cut", subtitle="The clip starts at the nearest key frame, "
+                                       "which can be a second or two before the time you set")
+        self.clip_hint.add_css_class("dim-label")
+        for r in (self.clip_start_row, self.clip_end_row, self.clip_hint):
+            self.clip_row.add_row(r)
+        self.clip_start_row.connect("changed", lambda *_: self._update_clip())
+        self.clip_end_row.connect("changed", lambda *_: self._update_clip())
+        self.clip_row.connect("notify::enable-expansion", lambda *_: self._update_clip())
+        gc.add(self.clip_row)
+        self.clip_group = gc
+        page.add(gc)
 
         g2 = Adw.PreferencesGroup()
         self.name_row = Adw.EntryRow(title="File name")
@@ -128,8 +167,17 @@ class AddWindow(Adw.Window):
             self._folder, self._folder_fixed = remembered, True
         self._update_folder_row()
 
+        clip = request.get("clip") if isinstance(request.get("clip"), dict) else None
+        if clip:
+            start, end = _num(clip.get("start"), 0), _num(clip.get("end"), -1)
+            self.clip_start_row.set_text(format_time(start) if start > 0 else "")
+            self.clip_end_row.set_text(format_time(end) if end > 0 else "")
+            self.clip_row.set_enable_expansion(True)
+            self.clip_row.set_expanded(True)
+
         url = request.get("url", "")
-        if request.get("kind") == "media" or looks_like_media_page(url):
+        # A format picked on the page (MKV, audio only…) needs yt-dlp, also for a direct video file.
+        if request.get("kind") == "media" or looks_like_media_page(url) or request.get("container") or request.get("audio"):
             self.mode_row.set_selected(1)
         if request.get("filename"):
             self._set_name(request["filename"])
@@ -139,6 +187,8 @@ class AddWindow(Adw.Window):
         self.url_row.set_text(url)
         if not url:
             self._paste_from_clipboard()
+        self._update_clip_visibility()
+        self._update_clip()
 
     @property
     def is_media(self):
@@ -168,6 +218,86 @@ class AddWindow(Adw.Window):
         if not self._setting_name:
             self._name_edited = True
         self._update_folder_row()
+        self._update_clip_visibility()
+
+    # --- format and clip ----------------------------------------------------------------------
+    def _selected_container(self):
+        i = self.format_row.get_selected()
+        return self._containers[i][1] if self.format_row.get_visible() and 0 <= i < len(self._containers) else ""
+
+    def _update_format_choices(self):
+        fmt = self._selected_format()
+        audio = fmt.startswith("ba")
+        if not self.is_media or fmt.startswith("link:"):
+            self.format_row.set_visible(False)
+            return
+        if self._playlist:
+            choices = [("Automatic (best audio)", "")] if audio else [
+                ("Automatic (best quality)", ""), ("MP4  ·  repackaged if needed, same quality", "mp4"),
+                ("MKV  ·  repackaged, same quality", "mkv")]
+        else:
+            choices = container_choices(self._info, audio)
+        current = self._selected_container() or self._want_container
+        self._containers = choices
+        self.format_row.set_model(Gtk.StringList.new([c[0] for c in choices]))
+        values = [c[1] for c in choices]
+        self.format_row.set_selected(values.index(current) if current in values else 0)
+        self.format_row.set_visible(len(choices) > 1)
+
+    def _clip_possible(self):
+        if self._playlist:
+            return False
+        if self.is_media:
+            return True
+        name = self.name_row.get_text().strip() or self.url_row.get_text().strip()
+        return category_for(name) in ("Video", "Music")
+
+    def _update_clip_visibility(self):
+        self.clip_group.set_visible(self._clip_possible())
+
+    def _clip_values(self):
+        """(ok, start, end) in seconds; -1 = from the start / to the end. Marks wrong fields."""
+        for r in (self.clip_start_row, self.clip_end_row):
+            r.remove_css_class("error")
+        if not self.clip_row.get_enable_expansion() or not self.clip_group.get_visible():
+            return True, -1.0, -1.0
+        a, b = self.clip_start_row.get_text().strip(), self.clip_end_row.get_text().strip()
+        start = parse_time(a) if a else 0.0
+        end = parse_time(b) if b else -1.0
+        ok = True
+        if start is None:
+            self.clip_start_row.add_css_class("error")
+            ok = False
+        if end is None or (end >= 0 and start is not None and end <= start):
+            self.clip_end_row.add_css_class("error")
+            ok = False
+        if ok and self._duration and start >= self._duration:
+            self.clip_start_row.add_css_class("error")
+            ok = False
+        if ok and self._duration and end > self._duration:
+            end = -1.0  # past the end: up to the end
+        if not ok:
+            return False, -1.0, -1.0
+        if start == 0 and end < 0:
+            return True, -1.0, -1.0  # the whole video
+        return True, start, end
+
+    def _update_clip(self):
+        on = self.clip_row.get_enable_expansion()
+        if not on:
+            self.clip_row.set_subtitle("Choose where the clip starts and ends")
+            return
+        ok, start, end = self._clip_values()
+        length = f"Video length {format_time(self._duration)}  ·  " if self._duration else ""
+        if not ok:
+            self.clip_row.set_subtitle(length + "Write times like 1:20 or 1:02:03; the end must come after the start")
+        elif start < 0 and end < 0:
+            self.clip_row.set_subtitle(length + "Enter a start and/or an end time")
+        else:
+            stop = end if end >= 0 else (self._duration or 0)
+            span = f"  ·  {human_time(stop - max(0, start))}" if stop > max(0, start) else ""
+            self.clip_row.set_subtitle(
+                f"{length}{format_time(max(0, start))} – {format_time(end) if end >= 0 else 'end'}{span}")
 
     def _target_folder(self):
         if self._folder_fixed:
@@ -252,6 +382,8 @@ class AddWindow(Adw.Window):
 
     def _on_mode_changed(self):
         self.quality_row.set_visible(self.is_media)
+        self._update_format_choices()
+        self._update_clip_visibility()
         self.seg_row.set_title("Connections" if not self.is_media else "Parallel fragments")
         self._update_folder_row()
         self._start_probe()
@@ -305,11 +437,21 @@ class AddWindow(Adw.Window):
             return False
         self.spinner.set_visible(False)
         self._links, self._guest = [], False
+        self._info, self._duration = None, 0
+        self.formats_row.set_visible(False)
         self.info_row.set_tooltip_text(None)
         if err:
             self.info_row.set_subtitle(f"Couldn't check the link: {err[:200]}")
             return False
         self._clear_playlist()
+        try:
+            return self._show_probe(media, result)
+        finally:
+            self._update_format_choices()
+            self._update_clip_visibility()
+            self._update_clip()
+
+    def _show_probe(self, media, result):
         if media and result.get("_type") == "tondar_links":
             self._show_links(result)
         elif media and is_playlist(result):
@@ -317,11 +459,18 @@ class AddWindow(Adw.Window):
             self._show_playlist(result)
         elif media:
             info = result
+            self._info = info
+            self._duration = info.get("duration") or 0
             self._guest = bool(info.get("_tondar_guest"))
+            formats = describe_formats(info)
+            self.formats_row.set_subtitle(formats)
+            self.formats_row.set_visible(bool(formats))
             self._choices = quality_choices(info)
             labels = [f"{label}  ·  ~{human_size(size)}" if size else label for label, _, size in self._choices]
             self.quality_row.set_model(Gtk.StringList.new(labels))
-            self.quality_row.set_selected(0)
+            want_audio = self.request.get("audio") or self._want_container in ("mp3", "m4a", "opus")
+            audio_rows = [i for i, c in enumerate(self._choices) if c[1].startswith("ba")]
+            self.quality_row.set_selected(audio_rows[0] if want_audio and audio_rows else 0)
             parts = [info.get("extractor_key") or ""]
             if info.get("duration"):
                 parts.append(human_time(info["duration"]))
@@ -428,6 +577,9 @@ class AddWindow(Adw.Window):
         entries, checks = self._playlist
         folder = self._save_folder()
         fmt = self._selected_format()
+        container = self._selected_container()
+        if fmt.startswith("ba") and container:
+            fmt = audio_selector(container)
         pad = len(str(len(entries)))
         now = time.time()
         r = self.request
@@ -440,7 +592,7 @@ class AddWindow(Adw.Window):
                 user_agent=r.get("user_agent", ""), cookies=r.get("cookies", []),
                 page_url=self.url_row.get_text().strip(),
                 created=now - n * 0.001,  # keeps playlist order in the newest-first list
-                scheduled=scheduled, guest=self._guest,
+                scheduled=scheduled, guest=self._guest, container=container,
             )
             self.manager.add(item, start=start)
         self._remember_folder()
@@ -457,6 +609,11 @@ class AddWindow(Adw.Window):
         if self._playlist:
             self._submit_playlist(start, scheduled)
             return
+        ok, clip_start, clip_end = self._clip_values()
+        if not ok:
+            self.clip_row.set_expanded(True)
+            return
+        clip = clip_start >= 0 or clip_end >= 0
         item = self._base_item(url)
         item.folder = self._target_folder()
         item.auto_folder = not self._folder_fixed
@@ -469,8 +626,8 @@ class AddWindow(Adw.Window):
             item.url, item.page_url = link["url"], url
             item.referer = r.get("referer") or url
             item.cookies = r.get("cookies", [])
-            if link["kind"] == "media":
-                item.kind, item.title, item.media_format = "media", name, "bv*+ba/b"
+            if link["kind"] == "media" or clip:
+                item.kind, item.title, item.media_format = "media", _stem(name), "bv*+ba/b"
             else:
                 ext = link["url"].split("?", 1)[0].rsplit(".", 1)[-1].lower()
                 if name and len(ext) <= 5 and not name.lower().endswith("." + ext):
@@ -481,14 +638,24 @@ class AddWindow(Adw.Window):
         elif self.is_media:
             item.kind = "media"
             item.title = name
-            item.media_format = self._selected_format()
+            fmt, container = self._selected_format(), self._selected_container()
+            if fmt.startswith("ba") and container:
+                fmt = audio_selector(container)
+            item.media_format, item.container = fmt, container
             item.guest = self._guest
+        elif clip:
+            # Part of a video file: yt-dlp (with ffmpeg) fetches just that part.
+            item.kind, item.title, item.media_format = "media", _stem(name), "bv*+ba/b"
         else:
             item.filename = name
             item.size = self._probe_size
+        item.clip_start, item.clip_end = clip_start, clip_end
         item.scheduled = scheduled
+        item.popup = True
         added = self.manager.add(item, start=start)
         self._remember_folder()
+        if start and added is item:
+            self.app.show_progress(item)
         if self.app.window and self.app.window.get_visible():
             if added is not item:
                 self.app.window.toast(f"Already in the list: “{added.display_name}”")
@@ -497,6 +664,280 @@ class AddWindow(Adw.Window):
         if scheduled and not self.manager.settings["schedule_enabled"]:
             self.app.window and self.app.window.toast("Turn on the scheduler in Preferences → Scheduler")
         self.close()
+
+
+CLONE_DEPTHS = [
+    ("The whole website", -1),
+    ("This page only", 0),
+    ("This page and the pages it links to", 1),
+    ("Two clicks deep", 2),
+    ("Three clicks deep", 3),
+]
+
+
+class CloneWindow(Adw.Window):
+    """"Clone Website": saves a whole site (pages, pictures, styles, scripts, fonts) for offline use."""
+
+    def __init__(self, app, url=""):
+        super().__init__(application=app, title="Clone Website", default_width=580, default_height=720)
+        self.app = app
+        self.manager = app.manager
+        self._generation = 0
+        self._timer = 0
+        self._title = ""
+        self._name_edited = False
+        self._setting_name = False
+        self._folder = self.manager.folder_for("", "site")
+        if app.window and app.window.get_visible():
+            self.set_transient_for(app.window)
+            self.set_modal(True)
+
+        view = Adw.ToolbarView()
+        view.add_top_bar(Adw.HeaderBar())
+        page = Adw.PreferencesPage()
+
+        g = Adw.PreferencesGroup(
+            description="Saves the website's pages with their pictures, styles, scripts and fonts, and links them "
+                        "together so the copy opens in your browser without internet.")
+        self.url_row = Adw.EntryRow(title="Website address")
+        self.url_row.connect("changed", self._on_url_changed)
+        g.add(self.url_row)
+        self.info_row = Adw.ActionRow(title="Website", subtitle="Enter an address, like https://example.com")
+        self.info_row.add_prefix(Gtk.Image(icon_name="web-browser-symbolic"))
+        self.spinner = Adw.Spinner(visible=False)
+        self.info_row.add_suffix(self.spinner)
+        g.add(self.info_row)
+        page.add(g)
+
+        g = Adw.PreferencesGroup(title="What to save")
+        self.depth_row = Adw.ComboRow(title="Pages", model=Gtk.StringList.new([d[0] for d in CLONE_DEPTHS]))
+        self.depth_row.connect("notify::selected", lambda *_: self._update_depth())
+        g.add(self.depth_row)
+        self.pages_row = Adw.SpinRow.new_with_range(1, 100000, 50)
+        self.pages_row.set_title("At most")
+        self.pages_row.set_subtitle("pages, so a huge site doesn't fill your disk")
+        self.pages_row.set_value(1000)
+        g.add(self.pages_row)
+        self.external_row = Adw.SwitchRow(
+            title="Pictures, styles and fonts from other servers", active=True,
+            subtitle="Many sites keep these on a CDN; without them pages look broken offline")
+        g.add(self.external_row)
+        self.files_row = Adw.SwitchRow(title="Files the pages link to", active=True,
+                                       subtitle="PDF, ZIP, videos, music… on the same website")
+        g.add(self.files_row)
+        self.size_row = Adw.SpinRow.new_with_range(0, 100000, 10)
+        self.size_row.set_title("Skip files larger than (MB)")
+        self.size_row.set_subtitle("0 means no limit")
+        self.size_row.set_value(200)
+        g.add(self.size_row)
+        self.robots_row = Adw.SwitchRow(title="Respect robots.txt", active=True,
+                                        subtitle="Skip the pages the website asks download tools not to visit")
+        g.add(self.robots_row)
+        page.add(g)
+
+        g = Adw.PreferencesGroup(title="Where")
+        self.name_row = Adw.EntryRow(title="Folder name")
+        self.name_row.connect("changed", lambda *_: self._on_name_changed())
+        g.add(self.name_row)
+        self.folder_row = Adw.ActionRow(title="Save in")
+        pick = Gtk.Button(icon_name="folder-open-symbolic", valign=Gtk.Align.CENTER, tooltip_text="Choose Folder")
+        pick.add_css_class("flat")
+        pick.connect("clicked", self._pick_folder)
+        self.folder_row.add_suffix(pick)
+        self.folder_row.set_activatable_widget(pick)
+        g.add(self.folder_row)
+        self.seg_row = Adw.SpinRow.new_with_range(1, 16, 1)
+        self.seg_row.set_title("Files at the same time")
+        self.seg_row.set_subtitle("More is faster; some sites block too many")
+        self.seg_row.set_value(6)
+        g.add(self.seg_row)
+        page.add(g)
+
+        note = Gtk.Label(label="Pages that are put together by JavaScript in the browser may look incomplete offline. "
+                               "Only clone sites you're allowed to copy.", wrap=True, xalign=0,
+                         margin_start=12, margin_end=12)
+        note.add_css_class("caption")
+        note.add_css_class("dim-label")
+        g = Adw.PreferencesGroup()
+        g.add(note)
+        page.add(g)
+        view.set_content(page)
+
+        buttons = Gtk.Box(spacing=12, halign=Gtk.Align.END, margin_top=12, margin_bottom=12, margin_start=12, margin_end=12)
+        cancel = Gtk.Button(label="Cancel")
+        cancel.connect("clicked", lambda *_: self.close())
+        later = Gtk.Button(label="Clone Later")
+        later.connect("clicked", lambda *_: self._submit(False))
+        self.start_btn = Gtk.Button()
+        self.start_btn.set_child(Adw.ButtonContent(icon_name="folder-download-symbolic", label="Start Cloning"))
+        self.start_btn.add_css_class("suggested-action")
+        self.start_btn.connect("clicked", lambda *_: self._submit(True))
+        for b in (cancel, later, self.start_btn):
+            buttons.append(b)
+        view.add_bottom_bar(buttons)
+        self.set_content(view)
+        self.set_default_widget(self.start_btn)
+
+        esc = Gtk.ShortcutController()
+        esc.add_shortcut(Gtk.Shortcut.new(Gtk.ShortcutTrigger.parse_string("Escape"), Gtk.CallbackAction.new(lambda *_: self.close())))
+        self.add_controller(esc)
+        self._update_folder_row()
+        self._update_depth()
+        if url:
+            self.url_row.set_text(url)
+
+    # --- helpers ----------------------------------------------------------------------------------
+    def _url(self):
+        url = self.url_row.get_text().strip()
+        if url and "://" not in url and "." in url and " " not in url:
+            url = "https://" + url
+        return url
+
+    def _update_depth(self):
+        depth = CLONE_DEPTHS[self.depth_row.get_selected()][1]
+        self.pages_row.set_sensitive(depth != 0)
+
+    def _on_name_changed(self):
+        if not self._setting_name:
+            self._name_edited = True
+        self._update_folder_row()
+
+    def _set_name(self, name):
+        self._setting_name = True
+        self.name_row.set_text(name)
+        self._setting_name = False
+        self._update_folder_row()
+
+    def _update_folder_row(self):
+        name = sanitize_filename(self.name_row.get_text().strip(), "")
+        path = os.path.join(self._folder, name) if name else self._folder
+        self.folder_row.set_subtitle(path.replace(os.path.expanduser("~"), "~", 1))
+
+    def _pick_folder(self, _btn):
+        start = self._folder if os.path.isdir(self._folder) else self.manager.settings["folder"]
+        dialog = Gtk.FileDialog(title="Save In", initial_folder=Gio.File.new_for_path(start))
+
+        def done(d, res):
+            try:
+                folder = d.select_folder_finish(res)
+            except GLib.Error:
+                return
+            self._folder = folder.get_path()
+            self._update_folder_row()
+
+        dialog.select_folder(self, None, done)
+
+    def _on_url_changed(self, _row):
+        self.url_row.remove_css_class("error")
+        if self._timer:
+            GLib.source_remove(self._timer)
+        self._timer = GLib.timeout_add(600, self._probe)
+        url = self._url()
+        host = urllib.parse.urlsplit(url).hostname if "://" in url else ""
+        if host and not self._name_edited:
+            self._set_name(sanitize_filename(host, "website"))
+
+    def _probe(self):
+        self._timer = 0
+        self._generation += 1
+        gen = self._generation
+        url = self._url()
+        if "://" not in url:
+            self.spinner.set_visible(False)
+            self.info_row.set_title("Website")
+            self.info_row.set_subtitle("Enter an address, like https://example.com")
+            return False
+        self.spinner.set_visible(True)
+        self.info_row.set_subtitle("Opening the page…")
+        proxy = self.manager.proxy_for(url)
+
+        def work():
+            try:
+                title, final, ctype = _page_title(url, proxy)
+                err = None
+            except Exception as e:  # noqa: BLE001
+                title = final = ctype = None
+                err = str(e) or e.__class__.__name__
+            GLib.idle_add(self._probe_done, gen, title, final, ctype, err)
+
+        threading.Thread(target=work, daemon=True).start()
+        return False
+
+    def _probe_done(self, gen, title, final, ctype, err):
+        if gen != self._generation:
+            return False
+        self.spinner.set_visible(False)
+        if err:
+            self.info_row.set_title("Website")
+            self.info_row.set_subtitle(f"Couldn't open it: {err[:200]}")
+            return False
+        host = urllib.parse.urlsplit(final).hostname or ""
+        self._title = title or host
+        self.info_row.set_title(title or host)
+        if ctype not in ("text/html", "application/xhtml+xml"):
+            self.info_row.set_subtitle(f"{host}  ·  this address is a file ({ctype}), not a web page")
+        else:
+            self.info_row.set_subtitle(f"{host}  ·  ready to clone")
+        return False
+
+    def _submit(self, start):
+        url = self._url()
+        if "://" not in url:
+            self.url_row.add_css_class("error")
+            return
+        host = urllib.parse.urlsplit(url).hostname or "website"
+        name = sanitize_filename(self.name_row.get_text().strip(), "") or sanitize_filename(host, "website")
+        depth = CLONE_DEPTHS[self.depth_row.get_selected()][1]
+        item = Item(
+            url=url, kind="site", folder=self._folder, filename=name, title=self._title,
+            clone_depth=depth, clone_max_pages=1 if depth == 0 else int(self.pages_row.get_value()),
+            clone_external=self.external_row.get_active(), clone_files=self.files_row.get_active(),
+            clone_max_mb=int(self.size_row.get_value()), clone_robots=self.robots_row.get_active(),
+            max_segments=int(self.seg_row.get_value()), popup=True,
+        )
+        added = self.manager.add(item, start=start)
+        if self.app.window and self.app.window.get_visible():
+            self.app.window.toast(f"Already in the list: “{added.display_name}”" if added is not item
+                                  else f"{'Cloning' if start else 'Added'} “{item.display_name}”")
+        if start and added is item:
+            self.app.show_progress(item)
+        self.close()
+
+
+def _page_title(url, proxy):
+    """(title, final url, content type) of a web page; reads only its beginning."""
+    from .http_task import DEFAULT_UA
+    from .net import proxy_handlers
+
+    opener = urllib.request.build_opener(*proxy_handlers(proxy))
+    req = urllib.request.Request(url, headers={"User-Agent": DEFAULT_UA, "Accept": "text/html,*/*;q=0.8"})
+    with opener.open(req, timeout=20) as r:
+        ctype = r.headers.get_content_type()
+        raw = r.read(256 * 1024) if ctype in ("text/html", "application/xhtml+xml") else b""
+        final = r.geturl()
+        charset = r.headers.get_content_charset() or "utf-8"
+    m = re.search(rb"<title[^>]*>(.*?)</title>", raw, re.I | re.S)
+    title = ""
+    if m:
+        try:
+            title = html.unescape(m.group(1).decode(charset, "replace"))
+        except LookupError:
+            title = html.unescape(m.group(1).decode("utf-8", "replace"))
+        title = " ".join(title.split())[:150]
+    return title, final, ctype
+
+
+def _num(value, default):
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _stem(name):
+    """A file name without its video/audio extension (yt-dlp adds the right one)."""
+    base, dot, ext = name.rpartition(".")
+    return base if dot and category_for(name) in ("Video", "Music") else name
 
 
 PROXY_MODES = [("system", "System settings"), ("none", "No proxy"), ("manual", "Manual")]
@@ -545,7 +986,11 @@ class PreferencesDialog(Adw.PreferencesDialog):
         g.add(autostart)
         g.add(self._switch("confirm_browser", "Ask before downloading from the browser",
                            "Show the “New Download” window for links sent by the extension"))
-        g.add(self._switch("notify", "Notify when a download finishes"))
+        g.add(self._switch("progress_window", "Show a progress window",
+                           "For downloads you start yourself: speed, time left, Pause and Cancel"))
+        g.add(self._switch("complete_window", "Show a window when a download finishes",
+                           "With buttons to open the file or its folder"))
+        g.add(self._switch("notify", "Notify when a download finishes", "Only when no window is shown for it"))
         page.add(g)
 
         g = Adw.PreferencesGroup(title="Video downloads", description="Videos from YouTube and most other sites are downloaded with yt-dlp.")
