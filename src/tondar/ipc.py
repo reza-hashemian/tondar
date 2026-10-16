@@ -33,6 +33,8 @@ def _try_lock(f):
 
             fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         return True
+    except ImportError:
+        return True  # no locking available: behave like before (forwarding only)
     except OSError:
         return False
 
