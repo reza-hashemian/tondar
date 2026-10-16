@@ -30,7 +30,16 @@ CATEGORY_ICONS = {
 
 
 def category_for(filename):
-    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+    """Category of a file name or URL. URLs are judged by their path only: "ep05.mkv?token=…"
+    is a video, not "Other" (that sent some episodes of a series to a different folder)."""
+    name = filename or ""
+    if "://" in name:
+        try:
+            name = urllib.parse.unquote(urllib.parse.urlparse(name).path)
+        except ValueError:
+            pass
+    name = name.replace("\\", "/").rsplit("/", 1)[-1]
+    ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
     for cat, exts in CATEGORIES.items():
         if ext in exts:
             return cat

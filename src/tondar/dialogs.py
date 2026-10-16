@@ -10,8 +10,8 @@ from . import APP_ID
 from .core import Item
 from .http_task import probe
 from .media import (
-    PLAYLIST_HINT, YTDLP_URL, install_ytdlp, is_playlist, playlist_choices, playlist_entries, probe_media,
-    ffmpeg_available, quality_choices, ytdlp_command, ytdlp_version,
+    PLAYLIST_HINT, YTDLP_URL, find_page_media, install_ytdlp, is_playlist, playlist_choices, playlist_entries,
+    probe_media, ffmpeg_available, quality_choices, ytdlp_command, ytdlp_version,
 )
 from .net import display_proxy, test_proxy
 from .util import MACOS, WINDOWS, app_dir, clean_page_title, human_size, human_time, looks_like_media_page, sanitize_filename
@@ -33,6 +33,10 @@ class AddWindow(Adw.Window):
         self._name_edited = False
         self._setting_name = False
         self._folder_fixed = False
+        self._folder_picked = False  # chosen by hand in this window: remembered for the next downloads
+        self._folder_reset = False  # "use the default folder" pressed: forget the remembered one
+        self._guest = False  # the video was found without logging in (yt-dlp's generic extractor)
+        self._links = []  # direct links found in the page when yt-dlp couldn't get the video
         self._choices = []
         self._probe_size = -1
         self._playlist = None  # (entries, check buttons) when a playlist was found
@@ -77,6 +81,11 @@ class AddWindow(Adw.Window):
         g2.add(self.name_row)
 
         self.folder_row = Adw.ActionRow(title="Save to")
+        self.reset_btn = Gtk.Button(icon_name="edit-undo-symbolic", valign=Gtk.Align.CENTER, visible=False,
+                                    tooltip_text="Use the default download folder again")
+        self.reset_btn.add_css_class("flat")
+        self.reset_btn.connect("clicked", self._reset_folder)
+        self.folder_row.add_suffix(self.reset_btn)
         pick = Gtk.Button(icon_name="folder-open-symbolic", valign=Gtk.Align.CENTER, tooltip_text="Choose Folder")
         pick.add_css_class("flat")
         pick.connect("clicked", self._pick_folder)
@@ -113,6 +122,10 @@ class AddWindow(Adw.Window):
         self.add_controller(esc)
 
         self._folder = self.manager.settings["folder"]
+        remembered = self.manager.remembered_folder()
+        if remembered:
+            # The folder picked by hand last time: every new download goes there until another one is picked.
+            self._folder, self._folder_fixed = remembered, True
         self._update_folder_row()
 
         url = request.get("url", "")
@@ -172,6 +185,23 @@ class AddWindow(Adw.Window):
 
     def _update_folder_row(self):
         self.folder_row.set_subtitle(self._save_folder().replace(os.path.expanduser("~"), "~", 1))
+        self.folder_row.set_title("Save to  ·  last chosen folder" if self._folder_fixed and not self._folder_picked
+                                  else "Save to")
+        self.reset_btn.set_visible(self._folder_fixed)
+
+    def _reset_folder(self, _btn):
+        self._folder, self._folder_fixed = self.manager.settings["folder"], False
+        self._folder_picked, self._folder_reset = False, True
+        self._update_folder_row()
+
+    def _remember_folder(self):
+        """Called when a download is added: the next ones go to the same folder."""
+        if not self.manager.settings.get("remember_folder", True):
+            return
+        if self._folder_picked:
+            self.manager.remember_folder(self._folder)
+        elif self._folder_reset:
+            self.manager.remember_folder(None)
 
     def _pick_folder(self, _btn):
         dialog = Gtk.FileDialog(title="Save To", initial_folder=Gio.File.new_for_path(self._target_folder()
@@ -183,6 +213,7 @@ class AddWindow(Adw.Window):
             except GLib.Error:
                 return
             self._folder, self._folder_fixed = folder.get_path(), True
+            self._folder_picked, self._folder_reset = True, False
             self._update_folder_row()
 
         dialog.select_folder(self, None, done)
@@ -192,6 +223,14 @@ class AddWindow(Adw.Window):
         if self._choices and 0 <= i < len(self._choices):
             return self._choices[i][1]
         return "bv*+ba/b"
+
+    def _selected_link(self):
+        """The direct link chosen in the quality list (no-login mode), or None."""
+        fmt = self._selected_format()
+        if fmt.startswith("link:"):
+            i = int(fmt[5:])
+            return self._links[i] if 0 <= i < len(self._links) else None
+        return None
 
     def _base_item(self, url):
         r = self.request
@@ -240,12 +279,21 @@ class AddWindow(Adw.Window):
             "Looking up the video (this can take a few seconds)…" if media else "Checking link…")
 
         def work():
+            proxy = self.manager.proxy_for(url)
             try:
-                proxy = self.manager.proxy_for(url)
                 result = probe_media(item, playlist=want_playlist, proxy=proxy) if media else probe(item, proxy=proxy)
                 err = None
             except Exception as e:  # noqa: BLE001
                 result, err = None, str(e) or e.__class__.__name__
+            if media and err:
+                # The site wants a login (or yt-dlp doesn't know it): list the video links that
+                # the page shows to any visitor instead.
+                try:
+                    links = find_page_media(item, url, proxy)
+                except Exception:  # noqa: BLE001
+                    links = []
+                if links:
+                    result, err = {"_type": "tondar_links", "links": links, "error": err}, None
             GLib.idle_add(self._probe_done, gen, media, result, err)
 
         threading.Thread(target=work, daemon=True).start()
@@ -255,14 +303,20 @@ class AddWindow(Adw.Window):
         if gen != self._generation:
             return False
         self.spinner.set_visible(False)
+        self._links, self._guest = [], False
+        self.info_row.set_tooltip_text(None)
         if err:
             self.info_row.set_subtitle(f"Couldn't check the link: {err[:200]}")
             return False
         self._clear_playlist()
-        if media and is_playlist(result):
+        if media and result.get("_type") == "tondar_links":
+            self._show_links(result)
+        elif media and is_playlist(result):
+            self._guest = bool(result.get("_tondar_guest"))
             self._show_playlist(result)
         elif media:
             info = result
+            self._guest = bool(info.get("_tondar_guest"))
             self._choices = quality_choices(info)
             labels = [f"{label}  ·  ~{human_size(size)}" if size else label for label, _, size in self._choices]
             self.quality_row.set_model(Gtk.StringList.new(labels))
@@ -272,6 +326,8 @@ class AddWindow(Adw.Window):
                 parts.append(human_time(info["duration"]))
             if info.get("uploader"):
                 parts.append(info["uploader"])
+            if self._guest:
+                parts.append("found without logging in")
             self.info_row.set_subtitle("  ·  ".join(p for p in parts if p) or "Ready")
             if not self._name_edited and info.get("title"):
                 self._set_name(sanitize_filename(info["title"]))
@@ -288,6 +344,25 @@ class AddWindow(Adw.Window):
             if not self._name_edited and name:
                 self._set_name(name)
         return False
+
+    def _show_links(self, result):
+        """No-login mode: offer the video links found in the page as the "quality" choices."""
+        self._links = result["links"]
+        self._choices = []
+        for i, link in enumerate(self._links):
+            path = link["url"].split("?", 1)[0].rstrip("/")
+            tail = path.rsplit("/", 1)[-1]
+            host = link["url"].split("/")[2] if link["url"].count("/") >= 2 else ""
+            short = tail if len(tail) <= 40 else tail[:37] + "…"
+            self._choices.append((f"{link['label']}  ·  {host}  ·  {short}", f"link:{i}", 0))
+        self.quality_row.set_model(Gtk.StringList.new([c[0] for c in self._choices]))
+        self.quality_row.set_selected(0)
+        n = len(self._links)
+        self.info_row.set_subtitle(
+            f"No login needed: found {n} video link{'s' if n != 1 else ''} on the page — pick one under Quality")
+        self.info_row.set_tooltip_text(f"yt-dlp said: {result.get('error') or ''}"[:500])
+        if not self._name_edited and self.request.get("title"):
+            self._set_name(sanitize_filename(clean_page_title(self.request["title"])))
 
     # --- playlists ------------------------------------------------------------------------------
     def _clear_playlist(self):
@@ -364,9 +439,10 @@ class AddWindow(Adw.Window):
                 user_agent=r.get("user_agent", ""), cookies=r.get("cookies", []),
                 page_url=self.url_row.get_text().strip(),
                 created=now - n * 0.001,  # keeps playlist order in the newest-first list
-                scheduled=scheduled,
+                scheduled=scheduled, guest=self._guest,
             )
             self.manager.add(item, start=start)
+        self._remember_folder()
         if self.app.window and self.app.window.get_visible():
             self.app.window.toast(f"{'Scheduled' if scheduled else 'Added'} {len(selected)} videos from “{os.path.basename(folder)}”")
         self.close()
@@ -382,19 +458,41 @@ class AddWindow(Adw.Window):
             return
         item = self._base_item(url)
         item.folder = self._target_folder()
+        item.auto_folder = not self._folder_fixed
         item.max_segments = int(self.seg_row.get_value())
         name = sanitize_filename(self.name_row.get_text().strip(), "")
-        if self.is_media:
+        link = self._selected_link() if self.is_media else None
+        if link:
+            # A video link found in the page (no login): download that link itself.
+            r = self.request
+            item.url, item.page_url = link["url"], url
+            item.referer = r.get("referer") or url
+            item.cookies = r.get("cookies", [])
+            if link["kind"] == "media":
+                item.kind, item.title, item.media_format = "media", name, "bv*+ba/b"
+            else:
+                ext = link["url"].split("?", 1)[0].rsplit(".", 1)[-1].lower()
+                if name and len(ext) <= 5 and not name.lower().endswith("." + ext):
+                    name = f"{name}.{ext}"
+                item.filename = name  # empty: named by the server
+                if item.auto_folder:
+                    item.folder = self.manager.folder_for(name or link["url"])
+        elif self.is_media:
             item.kind = "media"
             item.title = name
             item.media_format = self._selected_format()
+            item.guest = self._guest
         else:
             item.filename = name
             item.size = self._probe_size
         item.scheduled = scheduled
-        self.manager.add(item, start=start)
+        added = self.manager.add(item, start=start)
+        self._remember_folder()
         if self.app.window and self.app.window.get_visible():
-            self.app.window.toast(f"{'Scheduled' if scheduled else 'Added'} “{item.display_name}”")
+            if added is not item:
+                self.app.window.toast(f"Already in the list: “{added.display_name}”")
+            else:
+                self.app.window.toast(f"{'Scheduled' if scheduled else 'Added'} “{item.display_name}”")
         if scheduled and not self.manager.settings["schedule_enabled"]:
             self.app.window and self.app.window.toast("Turn on the scheduler in Preferences → Scheduler")
         self.close()
@@ -422,6 +520,17 @@ class PreferencesDialog(Adw.PreferencesDialog):
         self.folder_row.set_activatable_widget(btn)
         g.add(self.folder_row)
         g.add(self._switch("categorize", "Sort into sub-folders", "Video, Music, Compressed, Documents, Programs…"))
+        remember = self._switch("remember_folder", "Remember the folder I choose",
+                                "New downloads go to the folder last picked in the New Download window")
+        g.add(remember)
+        self.last_row = Adw.ActionRow(title="Last chosen folder", subtitle_selectable=True)
+        forget = Gtk.Button(label="Forget", valign=Gtk.Align.CENTER, tooltip_text="Use the download folder above again")
+        forget.connect("clicked", lambda *_: self._forget_folder())
+        self.last_row.add_suffix(forget)
+        self._forget_btn = forget
+        g.add(self.last_row)
+        remember.connect("notify::active", lambda *_: self._show_last_folder())
+        self._show_last_folder()
         g.add(self._spin("max_active", "Simultaneous downloads", 1, 20))
         g.add(self._spin("segments", "Connections per download", 1, 32, "Default for new downloads"))
         g.add(self._spin("speed_limit_kb", "Speed limit (KB/s)", 0, 1_000_000, "0 means unlimited", step=50))
@@ -645,8 +754,20 @@ class PreferencesDialog(Adw.PreferencesDialog):
                 return
             self._set("folder", path)
             self.folder_row.set_subtitle(path)
+            self._forget_folder()  # the newest choice wins: the new download folder is used from now on
 
         Gtk.FileDialog(title="Download Folder").select_folder(self.get_root(), None, done)
+
+    def _show_last_folder(self):
+        s = self.app.manager.settings
+        last = s.get("last_folder") or ""
+        self.last_row.set_subtitle(last or "None — the download folder above is used")
+        self.last_row.set_sensitive(bool(s.get("remember_folder", True)))
+        self._forget_btn.set_sensitive(bool(last))
+
+    def _forget_folder(self):
+        self._set("last_folder", "")
+        self._show_last_folder()
 
     def _show_version(self, version):
         self.ytdlp_row.set_subtitle(f"Version {version}" if version else "Not installed")

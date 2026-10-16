@@ -109,6 +109,11 @@ The Firefox add-on is signed by Mozilla, so it installs in regular Firefox.
 **Videos and playlists**
 - Hover a video on any website and click the orange **Download** button. It lists the video
   files and streams found on the page, plus **Best quality (yt-dlp)**.
+  The **×** next to it hides the button on that page; reload the page to get it back.
+- **No login needed:** when a site wants you to log in before a video can be looked up, Tondar
+  reads the page like a visitor (yt-dlp's generic extractor) and lists the video links the page
+  shows anyway (marked **no login needed** in the browser, and offered under **Quality** in the
+  New Download window).
 - Or paste a YouTube / Aparat / Instagram / … link, set **Type** to **Video / stream**, and choose the quality
   (**Audio only** is at the bottom of the list).
 - For a playlist link, every video is listed with a checkbox. The videos are saved in a folder named
@@ -144,6 +149,8 @@ The Firefox add-on is signed by Mozilla, so it installs in regular Firefox.
 
 **Preferences** (☰ → **Preferences**)
 - Download folder, and **Sort into sub-folders** (Video, Music, Compressed, …)
+- **Remember the folder I choose**: once you pick a folder in the New Download window, the next
+  downloads go there too (the ↶ button next to it, or **Forget**, goes back to the download folder)
 - **Simultaneous downloads**, **Connections per download** (more is usually faster), **Speed limit**
 - **Keep running when window is closed**, **Start on login**,
   **Ask before downloading from the browser**, notifications
@@ -153,7 +160,7 @@ The Firefox add-on is signed by Mozilla, so it installs in regular Firefox.
 | Problem | Fix |
 |---|---|
 | Extension popup says **App not found** | Make sure Tondar is installed, then restart the browser. On Windows, run the installer again to re-register the browser bridge. |
-| No **Download** button on a video | Reload the page after installing the extension. Very small videos (under 200×110) don't get a button. Use the toolbar icon instead. |
+| No **Download** button on a video | If you pressed its **×**, reload the page. Otherwise reload the page after installing the extension. Very small videos (under 200×110) don't get a button. Use the toolbar icon instead. |
 | YouTube errors, e.g. “Sign in to confirm you're not a bot” | ☰ → **Install / Update yt-dlp**, or set a proxy. |
 | A download fails with **HTTP 403** or “link expired” | ⋮ → **Refresh Download Address…** and paste a new link to the same file. |
 | Video downloads have no sound or don't merge | ffmpeg is missing (Linux: `sudo apt install ffmpeg`; on Windows and macOS it's included). |
@@ -263,6 +270,8 @@ sudo apt install ./tondar_*_all.deb ffmpeg
 - اگه می‌خوای مرورگر دوباره خودش دانلود کنه، روی آیکون تندر توی نوار ابزار بزن و تیک **Take over browser downloads** رو بردار.
 
 **ویدیو و پلی‌لیست**
+- با دکمه‌ی **×** کنار دکمه‌ی Download، اون دکمه توی همون صفحه بسته می‌شه. با رفرش صفحه دوباره برمی‌گرده.
+- **بدون لاگین:** اگه سایتی برای پیدا کردن ویدیو لاگین بخواد، تندر صفحه رو مثل یه بازدیدکننده‌ی عادی می‌خونه و لینک‌های ویدیویی که صفحه نشون می‌ده رو لیست می‌کنه (توی مرورگر با برچسب **no login needed** و توی پنجره‌ی New Download زیر **Quality**).
 - موس رو روی ویدیوی هر سایتی ببر و دکمه‌ی نارنجی **Download** رو بزن. لیست فایل‌ها و استریم‌های ویدیوی اون صفحه رو نشون می‌ده، به‌علاوه‌ی گزینه‌ی **Best quality (yt-dlp)**.
 - یا لینک یوتیوب، آپارات، اینستاگرام و… رو بده، **Type** رو روی **Video / stream** بذار و کیفیت رو انتخاب کن. گزینه‌ی **Audio only** (فقط صدا) آخر لیسته.
 - برای لینک پلی‌لیست، همه‌ی ویدیوها با تیک نشون داده می‌شن. ویدیوها توی پوشه‌ای به اسم پلی‌لیست و به ترتیب شماره‌گذاری ذخیره می‌شن. اگه فقط یه ویدیو می‌خوای، **Download entire playlist** رو خاموش کن.
@@ -296,6 +305,7 @@ sudo apt install ./tondar_*_all.deb ffmpeg
 
 **تنظیمات** (از ☰ گزینه‌ی **Preferences**)
 - پوشه‌ی دانلود، و **Sort into sub-folders**: مرتب کردن فایل‌ها توی پوشه‌های Video، Music، Compressed و…
+- **Remember the folder I choose**: وقتی توی پنجره‌ی New Download پوشه‌ای رو دستی انتخاب کنی، دانلودهای بعدی هم همون‌جا ذخیره می‌شن. با دکمه‌ی ↶ کنارش یا **Forget** به پوشه‌ی پیش‌فرض برمی‌گرده.
 - **Simultaneous downloads**: تعداد دانلود هم‌زمان. **Connections per download**: تعداد اتصال هر دانلود، که بیشترش معمولاً سریع‌تره. **Speed limit**: محدودیت سرعت.
 - **Keep running when window is closed**: کار کردن در پس‌زمینه. **Start on login**: اجرا موقع روشن شدن سیستم. **Ask before downloading from the browser**: پرسیدن قبل از دانلودهایی که از مرورگر میان. و نوتیفیکیشن‌ها.
 

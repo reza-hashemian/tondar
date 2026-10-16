@@ -7,6 +7,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import html
 import threading
 import urllib.parse
 import urllib.request
@@ -59,6 +60,25 @@ def _page_fallback(item, error):
     if item.page_url and item.page_url != item.url and EXPIRED_LINK.search(error or ""):
         return item.page_url
     return None
+
+
+# Errors of sites that want a logged-in user (or that yt-dlp has no extractor for). The page
+# itself often still has the video for visitors (og:video, <video src>, a player config), and
+# yt-dlp's generic extractor finds it there without an account.
+LOGIN_NEEDED = re.compile(
+    r"log ?in|sign ?in|cookies|authenticat|account|registered|premium|subscri|members?[ -]only|private|"
+    r"rate.?limit|unable to extract|no video formats|unsupported url|empty media response|"
+    r"HTTP Error 40[13]", re.I)
+
+
+def needs_guest_mode(error):
+    return bool(error) and bool(LOGIN_NEEDED.search(error))
+
+
+def _attempts(item):
+    """(with_cookies, generic) tries for yt-dlp, in order."""
+    normal = [(True, False), (False, False)] if cookies_allowed(item) else [(False, False)]
+    return [(False, True)] + normal if item.guest else normal
 
 
 def _bundled_ffmpeg():
@@ -178,11 +198,18 @@ def probe_media(item, playlist=False, proxy=None):
 
 
 def _probe(cmd, item, url, playlist, proxy):
-    attempts = [True, False] if cookies_allowed(item) else [False]
-    for with_cookies in attempts:
+    first_error = None
+    attempts = _attempts(item)
+    tried = set(attempts)
+    i = 0
+    while i < len(attempts):
+        with_cookies, generic = attempts[i]
+        i += 1
         cookie_file = write_cookie_file(item) if with_cookies else None
         args = cmd + ["-J", "--flat-playlist", "--yes-playlist" if playlist else "--no-playlist", "--no-warnings"]
         args += _header_args(item, proxy) + _encoding_args()
+        if generic:
+            args.append("--force-generic-extractor")
         if cookie_file:
             args += ["--cookies", cookie_file]
         try:
@@ -191,11 +218,99 @@ def _probe(cmd, item, url, playlist, proxy):
             if cookie_file:
                 os.unlink(cookie_file)
         if proc.returncode == 0:
-            break
-    if proc.returncode != 0:
+            info = json.loads(proc.stdout)
+            if generic:
+                info["_tondar_guest"] = True  # download it the same way
+            return info
         err = [line for line in proc.stderr.splitlines() if line.startswith("ERROR")]
-        raise RuntimeError(_friendly((err[-1] if err else proc.stderr.strip()[-300:]) or "yt-dlp failed"))
-    return json.loads(proc.stdout)
+        error = (err[-1] if err else proc.stderr.strip()[-300:]) or "yt-dlp failed"
+        first_error = first_error or error
+        if i == len(attempts) and (False, True) not in tried and needs_guest_mode(error):
+            attempts.append((False, True))  # no account: read the page like a visitor
+            tried.add((False, True))
+    raise RuntimeError(_friendly(first_error))
+
+
+# Links to video/audio files and streams in a page's HTML or scripts (also JSON-escaped: https:\/\/…).
+MEDIA_LINK = re.compile(
+    r"""https?:(?:\\?/){2}[^\s"'<>()]+?\.(?:mp4|m4v|mkv|webm|mov|avi|flv|wmv|3gp|m3u8|mpd|mp3|m4a|aac|ogg|opus|flac|wav)"""
+    r"""(?:[?#][^\s"'<>()]*)?(?=$|[\s"'<>()\\])""", re.I)
+META_MEDIA = re.compile(
+    r"""<meta[^>]+(?:property|name|itemprop)\s*=\s*["'](?:og:video(?::secure_url|:url)?|og:audio(?::secure_url)?|"""
+    r"""twitter:player:stream|contentUrl)["'][^>]*>""", re.I)
+TAG_SRC = re.compile(r"""<(?:video|audio|source)\b[^>]*?\bsrc\s*=\s*["']([^"']+)["']""", re.I)
+ATTR_CONTENT = re.compile(r"""content\s*=\s*["']([^"']+)["']""", re.I)
+STREAM_EXT = {"m3u8": "HLS stream", "mpd": "DASH stream"}
+AUDIO_EXT = {"mp3", "m4a", "aac", "ogg", "opus", "flac", "wav"}
+SKIP_HOSTS = re.compile(r"(^|\.)googlevideo\.com$")  # YouTube chunks; yt-dlp handles YouTube
+
+
+def _clean_link(raw, base):
+    raw = html.unescape(raw).replace("\\/", "/").replace("\\u0026", "&").replace("\\u002F", "/").rstrip("\\")
+    try:
+        u = urllib.parse.urlsplit(urllib.parse.urljoin(base, raw))
+    except ValueError:
+        return None
+    if u.scheme not in ("http", "https") or not u.hostname or SKIP_HOSTS.search(u.hostname):
+        return None
+    # Facebook / Instagram CDNs: without the byte range the link is the whole file.
+    query = "&".join(p for p in u.query.split("&") if p and not p.startswith(("bytestart=", "byteend=")))
+    return urllib.parse.urlunsplit((u.scheme, u.netloc, u.path, query, ""))
+
+
+def media_link_info(url):
+    """(kind, label) for a found link: kind "media" (stream, yt-dlp) or "http" (a plain file)."""
+    path = urllib.parse.urlsplit(url).path.lower()
+    ext = path.rsplit(".", 1)[-1] if "." in path.rsplit("/", 1)[-1] else ""
+    if ext in STREAM_EXT:
+        return "media", STREAM_EXT[ext]
+    return "http", f"{'Audio' if ext in AUDIO_EXT else 'Video'} file ({ext or 'file'})"
+
+
+def find_page_media(item, url=None, proxy=None, limit=30):
+    """Video links a visitor can see in the page at `url`, without logging in.
+
+    Returns [{"url", "kind", "label"}]. Used when yt-dlp can't get the video (login wall,
+    unknown site)."""
+    url = url or item.page_url or item.url
+    headers = {
+        "User-Agent": item.user_agent or "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                                         "(KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,*/*;q=0.8",
+    }
+    if item.referer:
+        headers["Referer"] = item.referer
+    opener = urllib.request.build_opener(*proxy_handlers(proxy))
+    with opener.open(urllib.request.Request(url, headers=headers), timeout=30) as r:
+        base = r.geturl()
+        ctype = r.headers.get_content_type()
+        if not ctype.startswith(("text/", "application/xhtml", "application/json", "application/javascript")):
+            return []
+        raw = r.read(6 * 1024 * 1024)
+        charset = r.headers.get_content_charset() or "utf-8"
+    text = raw.decode(charset, errors="replace")
+
+    found = []
+    for m in META_MEDIA.finditer(text):
+        c = ATTR_CONTENT.search(m.group(0))
+        if c:
+            found.append(c.group(1))
+    found += TAG_SRC.findall(text)
+    found += [m.group(0) for m in MEDIA_LINK.finditer(text)]
+
+    out, seen = [], set()
+    for raw_link in found:
+        link = _clean_link(raw_link, base)
+        if not link or link in seen:
+            continue
+        seen.add(link)
+        kind, label = media_link_info(link)
+        if kind == "http" and not re.search(r"\.[a-z0-9]{2,5}$", urllib.parse.urlsplit(link).path, re.I):
+            kind = "media"  # og:video pointing at a player page: let yt-dlp have a go at it
+        out.append({"url": link, "kind": kind, "label": label})
+        if len(out) >= limit:
+            break
+    return out  # in page order: og:video / <video> first, then links found in scripts
 
 
 PLAYLIST_HINT = re.compile(r"[?&]list=|/playlist\b|/sets/|/album/", re.I)
@@ -312,15 +427,25 @@ class MediaTask:
 
     def _try(self, cmd, name, url):
         """Download `url`; returns yt-dlp's error, or None when done or stopped."""
-        attempts = [True, False] if cookies_allowed(self.item) else [False]
-        for with_cookies in attempts:
-            rc, tail = self._run_ytdlp(cmd, name, url, with_cookies)
+        attempts = _attempts(self.item)
+        first_error = None
+        i = 0
+        while i < len(attempts):
+            with_cookies, generic = attempts[i]
+            i += 1
+            rc, tail = self._run_ytdlp(cmd, name, url, with_cookies, generic)
             if rc == 0 or self.stopped.is_set():
+                if generic:
+                    self.item.guest = True
                 return None
-        errors = [line for line in tail if line.startswith("ERROR")]
-        return errors[-1] if errors else (tail[-1] if tail else f"yt-dlp exited with {rc}")
+            errors = [line for line in tail if line.startswith("ERROR")]
+            error = errors[-1] if errors else (tail[-1] if tail else f"yt-dlp exited with {rc}")
+            first_error = first_error or error
+            if i == len(attempts) and (False, True) not in attempts and needs_guest_mode(error):
+                attempts.append((False, True))  # no account: read the page like a visitor
+        return first_error
 
-    def _run_ytdlp(self, cmd, name, url, with_cookies):
+    def _run_ytdlp(self, cmd, name, url, with_cookies, generic=False):
         it = self.item
         cookie_file = write_cookie_file(it) if with_cookies else None
         args = cmd + [
@@ -332,6 +457,8 @@ class MediaTask:
             "--progress-template", PROGRESS,
             "--print", "after_move:TONDARFILE|%(filepath)s",
         ] + _header_args(it, self.proxy) + _ffmpeg_args() + _encoding_args()
+        if generic:
+            args.append("--force-generic-extractor")
         if cookie_file:
             args += ["--cookies", cookie_file]
         if self.limiter.rate > 0:
@@ -339,32 +466,42 @@ class MediaTask:
         args += ["--", url]
 
         tail = []
-        base, last_done, last_total = 0, 0, 0
-        try:
-            self.proc = subprocess.Popen(
-                args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, bufsize=1, **_proc_kwargs())
-            for line in self.proc.stdout:
+        state = {"base": 0, "done": 0, "total": 0}
+
+        def read(stream):
+            for line in stream:
                 line = line.rstrip()
                 if line.startswith("TONDAR|"):
                     done, total, estimate = (_num(v) for v in line.split("|")[1:4])
                     total = total or estimate or 0
-                    if done < last_done * 0.5:  # yt-dlp moved on to the next stream (e.g. audio)
-                        base += last_total or last_done
-                    last_done, last_total = done, total
-                    it.done = base + done
-                    it.size = base + total if total else -1
+                    if done < state["done"] * 0.5:  # yt-dlp moved on to the next stream (e.g. audio)
+                        state["base"] += state["total"] or state["done"]
+                    state["done"], state["total"] = done, total
+                    it.done = state["base"] + done
+                    it.size = state["base"] + total if total else -1
                 elif line.startswith("TONDARFILE|"):
                     path = line.split("|", 1)[1]
                     it.folder, it.filename = os.path.split(path)
                     if os.path.exists(path):
                         it.size = it.done = os.path.getsize(path)
                 elif line:
-                    tail = (tail + [line])[-30:]
+                    tail.append(line)
+                    del tail[:-30]
+
+        try:
+            self.proc = subprocess.Popen(
+                args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, bufsize=1, **_proc_kwargs())
+            reader = threading.Thread(target=read, args=(self.proc.stdout,), daemon=True)
+            reader.start()
             rc = self.proc.wait()
+            # ffmpeg (started by yt-dlp for merging) can keep the output pipe open after yt-dlp has
+            # exited. Reading until the pipe closes then hung the download: it never finished and
+            # the downloads behind it stayed "Waiting in queue". Wait for yt-dlp itself instead.
+            reader.join(3)
         finally:
             if cookie_file and os.path.exists(cookie_file):
                 os.unlink(cookie_file)
-        return rc, tail
+        return rc, list(tail)
 
 
 def _num(v):

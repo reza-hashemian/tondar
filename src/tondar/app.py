@@ -132,11 +132,14 @@ class App(Adw.Application):
             cookies=req.get("cookies", []), page_url=req.get("page_url", ""),
             max_segments=int(m.settings["segments"]), size=int(req.get("size") or -1),
         )
-        item.folder = m.folder_for(name or url)
+        item.folder, item.auto_folder = m.pick_folder(name or url)
         if name:
             item.filename = unique_path(item.folder, name, m.taken_paths())
-        m.add(item, start=True)
-        bring_to_front(self.present_main())  # show the new download in the list
+        added = m.add(item, start=True)
+        win = self.present_main()
+        bring_to_front(win)  # show the new download in the list
+        if added is not item:
+            win.toast(f"Already in the list: “{added.display_name}”")
 
     # --- periodic update --------------------------------------------------------------------
     def _tick(self):
@@ -244,8 +247,7 @@ class App(Adw.Application):
 
     # --- misc actions ---------------------------------------------------------------------------
     def _clear_completed(self):
-        for item in [i for i in self.manager.items if i.status == COMPLETED]:
-            self.manager.remove(item, False)
+        self.manager.remove_many([i for i in self.manager.items if i.status == COMPLETED])
 
     def _open_ytdlp(self):
         dialog = PreferencesDialog(self)
@@ -267,6 +269,6 @@ class App(Adw.Application):
 
 def main(argv=None):
     argv = argv if argv is not None else sys.argv
-    if (WINDOWS or MACOS) and ipc.forward(argv[1:]):
-        return 0  # an instance is already running and took over
+    if (WINDOWS or MACOS) and not ipc.acquire_instance(argv[1:]):
+        return 0  # an instance is already running (or starting) and took over
     return App().run(argv)

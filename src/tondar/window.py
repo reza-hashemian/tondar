@@ -1,6 +1,7 @@
 import os
 import subprocess
 import time
+import traceback
 
 from gi.repository import Adw, Gdk, Gio, GLib, Gtk
 
@@ -385,6 +386,7 @@ class MainWindow(Adw.ApplicationWindow):
         self.rows = {}
         self.filter = "all"
         self.search = ""
+        self._filter_signature = None
 
         self.split = Adw.OverlaySplitView(min_sidebar_width=200, max_sidebar_width=240)
 
@@ -547,11 +549,20 @@ class MainWindow(Adw.ApplicationWindow):
         self._refresh_empty()
 
     def refresh(self):
-        for row in self.rows.values():
-            row.update()
+        for row in list(self.rows.values()):
+            try:
+                row.update()
+            except Exception:  # noqa: BLE001
+                # One bad row must not freeze the others (they would keep showing an old
+                # state such as "Waiting in queue" for a download that has finished).
+                traceback.print_exc()
         if self.filter in ("active", "unfinished", "completed", "scheduled"):
-            self.list.invalidate_filter()
-            self._refresh_empty()
+            # Re-filter only when a status changed, not twice a second.
+            signature = tuple((i.id, i.status, i.scheduled) for i in self.manager.items)
+            if signature != self._filter_signature:
+                self._filter_signature = signature
+                self.list.invalidate_filter()
+                self._refresh_empty()
         active = sum(1 for i in self.manager.items if i.status == DOWNLOADING)
         queued = sum(1 for i in self.manager.items if i.status == QUEUED)
         text = f"{len(self.manager.items)} downloads"
