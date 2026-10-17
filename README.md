@@ -107,6 +107,8 @@ The Firefox add-on is signed by Mozilla, so it installs in regular Firefox.
   button that isn't a real link, the page entry turns into **Download with Tondar** too.
 - To let the browser download normally again, click the Tondar toolbar icon and untick
   **Take over browser downloads**.
+- Several links sent from the browser at once open one after another: the **New Download** window
+  shows “N more links from the browser” and **Add All Now** adds the rest straight away.
 
 **Videos and playlists**
 - Hover a video on any website and click the orange **Download** button. It lists the video
@@ -128,6 +130,12 @@ The Firefox add-on is signed by Mozilla, so it installs in regular Firefox.
   take the player's current time. The clip gets its own name, e.g. `Video (clip 1m20s-2m05s).mp4`.
   The cut starts at the nearest key frame, so it can begin a second or two early.
 - Sites change often: if videos stop working, use ☰ → **Install / Update yt-dlp**.
+- **YouTube “Sign in to confirm you're not a bot”:** YouTube asks this on some networks (VPN, proxy,
+  shared connections). Tondar first tries without an account, then with the YouTube sign-in your
+  browser sent with the link (send the video with **Download with Tondar** while you're signed in to
+  youtube.com). You can also choose your browser in Preferences → **Sign-in from browser**; yt-dlp then
+  reads the YouTube sign-in from that browser (close Chrome / Edge first, they lock it). Press
+  **Try Again** next to **Details** after changing something. Nothing is stored by Tondar.
 
 **Progress and "Download Complete" windows**
 - Every download you start gets a small window of its own: percent, speed, time left, size,
@@ -138,9 +146,18 @@ The Firefox add-on is signed by Mozilla, so it installs in regular Firefox.
 
 **Clone a website** (the 🌐 button at the top, ☰ → **Clone Website…**, Ctrl+Shift+N, or right-click a
 page → **Clone this website with Tondar**)
-- Enter the address and choose **Pages** (the whole website, this page only, or 1–3 clicks deep),
-  **At most** N pages, pictures/styles/fonts from other servers (CDNs), the files the pages link to
-  (PDF, ZIP…), a size limit per file, and **Respect robots.txt**.
+- Enter the address and choose how far to go: **The whole website**, or turn it off and set
+  **Link depth** (0 = only this page, 1 = this page and the pages it links to, 5 = pages up to 5 links
+  away). **Only this website** keeps the clone on that site; **Include subdomains** also follows
+  `blog.example.com`, `shop.example.com`…; turned off, links to other websites are followed too (use a
+  link depth then). Also: **At most** N pages, pictures/styles/fonts from other servers (CDNs), the
+  files the pages link to (PDF, ZIP…), a size limit per file, and **Respect robots.txt**.
+- Every address is downloaded once: `#parts`, tracking parameters (`utm_…`, `fbclid`…), the order of
+  parameters, `dir/` vs `dir/index.html` and redirects are recognized, and identical files under
+  different addresses are saved once.
+- **Updating a copy:** clone the same address into the same folder again (the window offers
+  **Update the copy in this folder**), or ⋮ → **Download Again**: Tondar asks the server what changed
+  since last time (ETag / Last-Modified) and downloads only the pages and files that changed.
 - Pick the folder and name; links are rewritten so the copy opens offline in a browser
   (**Open Website** opens its first page). Pause / resume works like for files; files that could not be
   saved are listed in `_tondar-failed.txt`.
@@ -154,7 +171,11 @@ page → **Clone this website with Tondar**)
   continues), download again, add to / remove from schedule, remove, delete the file.
 - The left sidebar filters by status (Downloading, Unfinished, Completed, Scheduled) and type
   (Video, Music, Compressed, …). Use the search box to find a download.
-- Closing the window keeps Tondar running in the background. Quit it with ☰ → **Quit**.
+- Closing the window keeps Tondar running in the background, with its icon in the notification area
+  (Windows: click **^** next to the clock if it's hidden; drag it onto the taskbar to keep it visible) or the
+  system tray (Linux). Click the icon to open Tondar; right-click it for **New Download**, **Clone Website**,
+  **Resume All**, **Pause All**, **Preferences** and **Quit Tondar**. On GNOME the tray needs the
+  “AppIndicator and KStatusNotifierItem Support” extension (Ubuntu has it already). Quit with ☰ → **Quit** too.
 
 **Scheduler** (☰ → **Scheduler**)
 - Turn on **Enable scheduler**, choose the **start** time, an optional **stop** time, and the **days**.
@@ -181,6 +202,8 @@ page → **Clone this website with Tondar**)
 - **Keep running when window is closed**, **Start on login**,
   **Ask before downloading from the browser**, notifications
 - **Show a progress window**, **Show a window when a download finishes**
+- **Sign-in from browser** (under Video downloads): the browser yt-dlp may read your YouTube sign-in
+  from when YouTube asks to confirm you're not a bot (**Don't use** by default)
 
 ## Troubleshooting
 
@@ -188,7 +211,9 @@ page → **Clone this website with Tondar**)
 |---|---|
 | Extension popup says **App not found** | Make sure Tondar is installed, then restart the browser. On Windows, run the installer again to re-register the browser bridge. |
 | No **Download** button on a video | If you pressed its **×**, reload the page. Otherwise reload the page after installing the extension. Very small videos (under 200×110) don't get a button. Use the toolbar icon instead. |
-| YouTube errors, e.g. “Sign in to confirm you're not a bot” | ☰ → **Install / Update yt-dlp**, or set a proxy. |
+| YouTube: “Sign in to confirm you're not a bot” | Send the video from the browser while signed in to youtube.com, or pick your browser in Preferences → **Sign-in from browser** (close Chrome / Edge first) and press **Try Again**. Turning a VPN/proxy off or using another network also helps. ☰ → **Install / Update yt-dlp** for other YouTube errors. |
+| Download Complete → **Open** / **Open Folder** froze or closed Tondar | Fixed in 1.4.0 (they no longer use GTK's file launcher). |
+| No Tondar icon next to the clock (Windows) | Click **^** (hidden icons); drag the icon onto the taskbar to keep it there. |
 | A download fails with **HTTP 403** or “link expired” | ⋮ → **Refresh Download Address…** and paste a new link to the same file. |
 | Video downloads have no sound or don't merge | ffmpeg is missing (Linux: `sudo apt install ffmpeg`; on Windows and macOS it's included). |
 | Scheduled downloads didn't start | Tondar must be running at that time: turn on **Start on login**, and check **Enable scheduler** and the days. |
@@ -296,6 +321,7 @@ sudo apt install ./tondar_*_all.deb ffmpeg
 - وقتی افزونه نصب باشه، کلیک روی لینک دانلود توی مرورگر به‌جای دانلود مرورگر، پنجره‌ی **New Download** تندر رو باز می‌کنه. 
 - با **راست‌کلیک** روی هر لینک (یا ویدیو، صدا و عکس) گزینه‌ی **Download with Tondar** میاد. روی دکمه‌های دانلودی که لینک واقعی نیستن هم همین گزینه نشون داده می‌شه.
 - اگه می‌خوای مرورگر دوباره خودش دانلود کنه، روی آیکون تندر توی نوار ابزار بزن و تیک **Take over browser downloads** رو بردار.
+- اگه چند تا لینک رو پشت سر هم از مرورگر بفرستی، یکی‌یکی باز می‌شن: پنجره‌ی **New Download** می‌نویسه «N more links from the browser» و دکمه‌ی **Add All Now** بقیه رو یه‌جا اضافه می‌کنه.
 
 **ویدیو و پلی‌لیست**
 - با دکمه‌ی **×** کنار دکمه‌ی Download، اون دکمه توی همون صفحه بسته می‌شه. با رفرش صفحه دوباره برمی‌گرده.
@@ -306,6 +332,7 @@ sudo apt install ./tondar_*_all.deb ffmpeg
 - **فرمت:** ردیف **Format** فرمت‌هایی که سایت داره (MP4، WebM و…، زیر **Formats on this site**) و تبدیل بدون افت کیفیت به MKV/MP4 رو نشون می‌ده. توی صفحه هم پایین منوی دکمه‌ی نارنجی، زیر **Format** همین انتخاب هست (Auto / MP4 / MKV / WebM / Audio only).
 - **دانلود فقط یه تیکه از ویدیو:** **Download only a part** (توی منوی دکمه‌ی نارنجی با علامت ✂) رو روشن کن و **From** و **To** رو بنویس (مثلاً `1:20`، `90` یا `1:02:03`؛ اگه **To** خالی باشه تا آخر ویدیو). توی صفحه دکمه‌ی **Now** زمان فعلی پخش‌کننده رو برمی‌داره. اسم فایل جدا می‌شه، مثل `Video (clip 1m20s-2m05s).mp4`. برش از نزدیک‌ترین کی‌فریم شروع می‌شه، پس ممکنه یکی دو ثانیه زودتر شروع بشه.
 - سایت‌ها زیاد تغییر می‌کنن. اگه دانلود ویدیو کار نکرد، از ☰ گزینه‌ی **Install / Update yt-dlp** رو بزن.
+- **خطای یوتیوب «Sign in to confirm you're not a bot»:** یوتیوب این رو روی بعضی شبکه‌ها (VPN، پروکسی، اینترنت‌های اشتراکی) می‌پرسه و ربطی به لینک نداره. تندر اول بدون حساب امتحان می‌کنه، بعد با ورود یوتیوبی که مرورگر همراه لینک فرستاده (پس وقتی توی youtube.com وارد حسابت هستی، ویدیو رو با **Download with Tondar** بفرست). یا توی Preferences گزینه‌ی **Sign-in from browser** رو روی مرورگرت بذار تا yt-dlp ورود یوتیوب رو از همون مرورگر بخونه (کروم و اج رو قبلش کامل ببند). بعد از هر تغییر، دکمه‌ی **Try Again** کنار **Details** رو بزن. تندر چیزی ذخیره نمی‌کنه.
 
 **پنجره‌ی پیشرفت و «Download Complete»**
 - هر دانلودی که شروع کنی یه پنجره‌ی کوچیک جدا داره: درصد، سرعت، زمان باقی‌مونده، حجم، پوشه و دکمه‌های **Pause / Resume**، **Cancel** و **Hide**. از ⋮ و **Progress Window** دوباره باز می‌شه.
@@ -313,7 +340,9 @@ sudo apt install ./tondar_*_all.deb ffmpeg
 - هر دو رو می‌تونی توی Preferences خاموش کنی (**Show a progress window** و **Show a window when a download finishes**).
 
 **کپی کامل سایت (Clone Website)** — دکمه‌ی 🌐 بالای پنجره، یا ☰ و **Clone Website…**، یا Ctrl+Shift+N، یا راست‌کلیک روی صفحه و **Clone this website with Tondar**
-- آدرس رو بده و انتخاب کن: **Pages** (کل سایت، فقط همین صفحه، یا ۱ تا ۳ کلیک عمق)، **At most** (حداکثر تعداد صفحه)، عکس/استایل/فونت از سرورهای دیگه (CDN)، فایل‌هایی که صفحه‌ها بهشون لینک دادن (PDF، ZIP و…)، محدودیت حجم هر فایل، و **Respect robots.txt**.
+- آدرس رو بده و انتخاب کن تا کجا بره: **The whole website** (کل سایت)، یا خاموشش کن و **Link depth** رو عدد بده (۰ یعنی فقط همین صفحه، ۱ یعنی این صفحه و صفحه‌هایی که بهشون لینک داده، ۵ یعنی صفحه‌ها تا ۵ لینک فاصله). **Only this website** کپی رو توی همون سایت نگه می‌داره؛ **Include subdomains** زیردامنه‌ها مثل `blog.example.com` و `shop.example.com` رو هم می‌گیره؛ اگه خاموشش کنی لینک سایت‌های دیگه هم دنبال می‌شن (اون موقع حتماً عمق بذار). بقیه: **At most** (حداکثر تعداد صفحه)، عکس/استایل/فونت از سرورهای دیگه (CDN)، فایل‌هایی که صفحه‌ها بهشون لینک دادن (PDF، ZIP و…)، محدودیت حجم هر فایل، و **Respect robots.txt**.
+- هر آدرس فقط یه بار دانلود می‌شه: `#بخش‌ها`، پارامترهای ردیابی (`utm_…`، `fbclid` و…)، ترتیب پارامترها، `dir/` و `dir/index.html` و ریدایرکت‌ها شناخته می‌شن و فایل‌های یکسان با آدرس‌های مختلف فقط یه بار ذخیره می‌شن.
+- **به‌روز کردن کپی:** همون آدرس رو دوباره توی همون پوشه کپی کن (پنجره گزینه‌ی **Update the copy in this folder** رو نشون می‌ده)، یا از ⋮ گزینه‌ی **Download Again** رو بزن: تندر از سرور می‌پرسه از دفعه‌ی قبل چی عوض شده (ETag / Last-Modified) و فقط صفحه‌ها و فایل‌های تغییرکرده رو دانلود می‌کنه.
 - پوشه و اسم رو انتخاب کن. لینک‌ها طوری بازنویسی می‌شن که نسخه‌ی کپی بدون اینترنت توی مرورگر باز بشه (**Open Website** صفحه‌ی اولش رو باز می‌کنه). توقف و ادامه مثل فایل‌ها کار می‌کنه و فایل‌هایی که ذخیره نشدن توی `_tondar-failed.txt` لیست می‌شن.
 - سایت‌هایی که صفحه‌هاشون رو با جاوااسکریپت می‌سازن (وب‌اپ‌ها) فقط تا جایی که HTML دارن کپی می‌شن.
 
@@ -327,7 +356,7 @@ sudo apt install ./tondar_*_all.deb ffmpeg
   - اضافه یا حذف از زمان‌بندی
   - حذف از لیست، یا پاک کردن خود فایل
 - نوار کنار صفحه دانلودها رو بر اساس وضعیت (Downloading، Unfinished، Completed، Scheduled) و نوع (Video، Music، Compressed و…) جدا می‌کنه. با کادر جستجو هم می‌تونی دانلود رو پیدا کنی.
-- بستن پنجره برنامه رو نمی‌بنده و دانلودها ادامه پیدا می‌کنن. برای بستن کامل از ☰ گزینه‌ی **Quit** رو بزن.
+- بستن پنجره برنامه رو نمی‌بنده و دانلودها ادامه پیدا می‌کنن. آیکون تندر کنار ساعت (Notification area ویندوز؛ اگه نمی‌بینیش روی **^** بزن و برای همیشه‌ای دیده شدن بکشش روی تسک‌بار) یا توی System tray لینوکس می‌مونه. با کلیک روش تندر باز می‌شه و با راست‌کلیک منوی **Show Tondar**، **New Download**، **Clone Website**، **Resume All**، **Pause All**، **Preferences** و **Quit Tondar** میاد. روی GNOME برای دیدن آیکون، افزونه‌ی «AppIndicator and KStatusNotifierItem Support» لازمه (اوبونتو خودش داره). برای بستن کامل از ☰ هم می‌شه **Quit** رو زد.
 
 **زمان‌بندی** (از ☰ گزینه‌ی **Scheduler**)
 - **Enable scheduler** رو روشن کن. ساعت **شروع**، اگه خواستی ساعت **توقف**، و **روزهای** هفته رو انتخاب کن.
@@ -349,12 +378,14 @@ sudo apt install ./tondar_*_all.deb ffmpeg
 - **Simultaneous downloads**: تعداد دانلود هم‌زمان. **Connections per download**: تعداد اتصال هر دانلود، که بیشترش معمولاً سریع‌تره. **Speed limit**: محدودیت سرعت.
 - **Keep running when window is closed**: کار کردن در پس‌زمینه. **Start on login**: اجرا موقع روشن شدن سیستم. **Ask before downloading from the browser**: پرسیدن قبل از دانلودهایی که از مرورگر میان. و نوتیفیکیشن‌ها.
 - **Show a progress window**: پنجره‌ی پیشرفت جدا برای هر دانلود. **Show a window when a download finishes**: پنجره‌ی Download Complete.
+- **Sign-in from browser** (زیر Video downloads): وقتی یوتیوب بپرسه ربات نیستی، yt-dlp ورود یوتیوب رو از این مرورگر بخونه (پیش‌فرض **Don't use**).
 
 ### رفع مشکل
 
 - **آیکون افزونه App not found نشون می‌ده:** مطمئن شو تندر نصبه و مرورگر رو ری‌استارت کن. روی ویندوز، نصب‌کننده رو یه بار دیگه اجرا کن.
 - **دکمه‌ی Download روی ویدیو نمیاد:** بعد از نصب افزونه صفحه رو رفرش کن. ویدیوهای خیلی کوچیک دکمه نمی‌گیرن. در این صورت از آیکون افزونه توی نوار ابزار استفاده کن.
-- **یوتیوب خطا می‌ده:** از ☰ گزینه‌ی **Install / Update yt-dlp** رو بزن، یا پروکسی تنظیم کن.
+- **یوتیوب می‌گه «Sign in to confirm you're not a bot»:** ویدیو رو وقتی توی youtube.com وارد حسابت هستی از مرورگر بفرست، یا توی Preferences گزینه‌ی **Sign-in from browser** رو روی مرورگرت بذار (کروم/اج رو قبلش ببند) و **Try Again** رو بزن. خاموش کردن VPN/پروکسی یا عوض کردن شبکه هم کمک می‌کنه. برای بقیه‌ی خطاهای یوتیوب از ☰ گزینه‌ی **Install / Update yt-dlp** رو بزن.
+- **آیکون تندر کنار ساعت ویندوز نیست:** روی **^** (آیکون‌های مخفی) بزن؛ برای همیشه دیده شدن، آیکون رو بکش روی تسک‌بار.
 - **دانلود با خطای HTTP 403 یا "link expired" متوقف شد:** از ⋮ گزینه‌ی **Refresh Download Address** رو بزن و لینک جدید همون فایل رو بده.
 - **ویدیو صدا نداره یا صدا و تصویرش جدا مونده:** ffmpeg نصب نیست. روی لینوکس دستور `sudo apt install ffmpeg` رو بزن. روی ویندوز ffmpeg همراه برنامه هست.
 - **دانلودهای زمان‌بندی‌شده شروع نشدن:** تندر باید سر اون ساعت در حال اجرا باشه. **Start on login** رو روشن کن و **Enable scheduler** و روزهای هفته رو هم چک کن.
