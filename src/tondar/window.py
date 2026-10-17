@@ -1,5 +1,7 @@
 import os
+import shutil
 import subprocess
+import threading
 import time
 import traceback
 
@@ -119,20 +121,92 @@ def _win32_foreground(title):
     return True
 
 
+# Opening files and folders never involves a window. Gtk.FileLauncher with a parent window
+# crashed Tondar (segmentation fault) when that window closed while the launch was still
+# running, which is exactly what "Download Complete → Open / Open Folder" does; on Windows
+# it could also freeze the app while the program started. `parent` is kept for callers.
+def _quiet_popen(cmd, **kw):
+    try:
+        subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                         close_fds=True, **kw)
+        return True
+    except OSError:
+        traceback.print_exc()
+        return False
+
+
+def _win_start(path, verb=None):
+    """ShellExecute in a thread of its own: starting an installer (UAC prompt) or a slow
+    program must not stop the window from drawing."""
+    def run():
+        try:
+            import ctypes
+
+            ctypes.windll.ole32.CoInitializeEx(None, 0x2 | 0x4)  # apartment threaded, no OLE1 DDE
+            if verb:
+                os.startfile(path, verb)
+            else:
+                os.startfile(path)
+        except OSError:
+            traceback.print_exc()
+
+    threading.Thread(target=run, daemon=True).start()
+
+
+def _gio_open(path):
+    uri = Gio.File.new_for_path(path).get_uri()
+
+    def done(_src, res):
+        try:
+            Gio.AppInfo.launch_default_for_uri_finish(res)
+        except GLib.Error as e:
+            print("Tondar: can't open", path, "-", e.message)
+
+    Gio.AppInfo.launch_default_for_uri_async(uri, None, None, done)
+
+
 def open_uri(path, parent=None):
+    """Open a file (or folder, or web page file) with its default program."""
     if MACOS:
-        subprocess.Popen(["open", path])
-        return
-    launcher = Gtk.FileLauncher.new(Gio.File.new_for_path(path))
-    launcher.launch(parent, None, None)
+        _quiet_popen(["open", path])
+    elif WINDOWS:
+        _win_start(os.path.normpath(path))
+    elif shutil.which("xdg-open"):
+        _quiet_popen(["xdg-open", path], start_new_session=True)
+    else:
+        _gio_open(path)
 
 
 def show_in_folder(path, parent=None):
     """Open the folder with `path` selected."""
     if MACOS:  # GTK asks a D-Bus file manager, which macOS doesn't have
-        subprocess.Popen(["open", "-R", path])
+        _quiet_popen(["open", "-R", path])
+    elif WINDOWS:
+        # explorer wants exactly: /select,"C:\path\file" (one argument, quoted path)
+        if not _quiet_popen('explorer /select,"%s"' % os.path.normpath(path)):
+            open_uri(os.path.dirname(path))
     else:
-        Gtk.FileLauncher.new(Gio.File.new_for_path(path)).open_containing_folder(parent, None, None)
+        _linux_show_item(path)
+
+
+def _linux_show_item(path):
+    """org.freedesktop.FileManager1.ShowItems (Files, Dolphin, Nemo, Thunar…), else open the folder."""
+    folder = os.path.dirname(path)
+    app = Gio.Application.get_default()
+    bus = app.get_dbus_connection() if app else None
+    if bus is None:
+        open_uri(folder)
+        return
+
+    def done(conn, res):
+        try:
+            conn.call_finish(res)
+        except GLib.Error:
+            open_uri(folder)  # no file manager on D-Bus
+
+    bus.call("org.freedesktop.FileManager1", "/org/freedesktop/FileManager1", "org.freedesktop.FileManager1",
+             "ShowItems", GLib.Variant("(ass)", ([Gio.File.new_for_path(path).get_uri()], "")), None,
+             Gio.DBusCallFlags.NONE, 5000, None, done)
 
 
 def open_folder(path, parent=None):
