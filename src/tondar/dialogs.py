@@ -856,7 +856,10 @@ class CloneWindow(Adw.Window):
         self.same_row.set_subtitle(f"Follow links on {bare} only" if bare else "Don't follow links to other websites")
         domain = site_domain(bare) if bare else "example.com"
         self.sub_row.set_subtitle(f"Also blog.{domain}, shop.{domain}…")
-        self.sub_row.set_sensitive(self.same_row.get_active())
+        is_ip = bool(re.fullmatch(r"[\d.]+|\[?[0-9a-fA-F:]+\]?", bare)) and bool(bare)
+        if is_ip:
+            self.sub_row.set_subtitle("Not for an IP address")
+        self.sub_row.set_sensitive(self.same_row.get_active() and not is_ip)
         if not self.same_row.get_active():
             self.same_row.set_subtitle("Links to other websites are followed too"
                                        + (" — use a link depth or a page limit" if self._depth() < 0 else ""))
