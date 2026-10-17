@@ -16,7 +16,7 @@ from .http_task import probe
 from .media import (
     PLAYLIST_HINT, YTDLP_URL, audio_selector, container_choices, describe_formats, find_page_media, format_time,
     install_ytdlp, is_playlist, parse_time, playlist_choices, playlist_entries, probe_media, ffmpeg_available,
-    quality_choices, ytdlp_command, ytdlp_version,
+    quality_choices, ytdlp_command, ytdlp_version, BROWSERS, is_bot_check,
 )
 from .net import display_proxy, test_proxy
 from .util import (
@@ -86,6 +86,9 @@ class AddWindow(Adw.Window):
         self.info_row = Adw.ActionRow(title="Details", subtitle="Enter a link")
         self.spinner = Adw.Spinner(visible=False)
         self.info_row.add_suffix(self.spinner)
+        self.retry_btn = Gtk.Button(label="Try Again", valign=Gtk.Align.CENTER, visible=False)
+        self.retry_btn.connect("clicked", lambda *_: self._start_probe())
+        self.info_row.add_suffix(self.retry_btn)
         g1.add(self.info_row)
 
         self.formats_row = Adw.ActionRow(title="Formats on this site", subtitle_selectable=True, visible=False)
@@ -409,6 +412,7 @@ class AddWindow(Adw.Window):
             self.spinner.set_visible(False)
             return False
         item = self._base_item(url)
+        self.retry_btn.set_visible(False)
         self.spinner.set_visible(True)
         media = self.is_media
         if media and not ytdlp_command():
@@ -429,7 +433,7 @@ class AddWindow(Adw.Window):
                 err = None
             except Exception as e:  # noqa: BLE001
                 result, err = None, str(e) or e.__class__.__name__
-            if media and err:
+            if media and err and not is_bot_check(err):
                 # The site wants a login (or yt-dlp doesn't know it): list the video links that
                 # the page shows to any visitor instead.
                 try:
@@ -447,12 +451,14 @@ class AddWindow(Adw.Window):
         if gen != self._generation:
             return False
         self.spinner.set_visible(False)
-        self._links, self._guest = [], False
+        self._links, self._guest, self._cookie_mode = [], False, ""
         self._info, self._duration = None, 0
         self.formats_row.set_visible(False)
         self.info_row.set_tooltip_text(None)
         if err:
-            self.info_row.set_subtitle(f"Couldn't check the link: {err[:200]}")
+            self.info_row.set_subtitle(err[:900] if is_bot_check(err) or "\n•" in err
+                                       else f"Couldn't check the link: {err[:200]}")
+            self.retry_btn.set_visible(True)
             return False
         self._clear_playlist()
         try:
@@ -467,12 +473,14 @@ class AddWindow(Adw.Window):
             self._show_links(result)
         elif media and is_playlist(result):
             self._guest = bool(result.get("_tondar_guest"))
+            self._cookie_mode = result.get("_tondar_cookies", "")
             self._show_playlist(result)
         elif media:
             info = result
             self._info = info
             self._duration = info.get("duration") or 0
             self._guest = bool(info.get("_tondar_guest"))
+            self._cookie_mode = info.get("_tondar_cookies", "")
             formats = describe_formats(info)
             self.formats_row.set_subtitle(formats)
             self.formats_row.set_visible(bool(formats))
@@ -603,7 +611,7 @@ class AddWindow(Adw.Window):
                 user_agent=r.get("user_agent", ""), cookies=r.get("cookies", []),
                 page_url=self.url_row.get_text().strip(),
                 created=now - n * 0.001,  # keeps playlist order in the newest-first list
-                scheduled=scheduled, guest=self._guest, container=container,
+                scheduled=scheduled, guest=self._guest, container=container, cookie_mode=self._cookie_mode,
             )
             self.manager.add(item, start=start)
         self._remember_folder()
@@ -654,6 +662,7 @@ class AddWindow(Adw.Window):
                 fmt = audio_selector(container)
             item.media_format, item.container = fmt, container
             item.guest = self._guest
+            item.cookie_mode = self._cookie_mode
         elif clip:
             # Part of a video file: yt-dlp (with ffmpeg) fetches just that part.
             item.kind, item.title, item.media_format = "media", _stem(name), "bv*+ba/b"
@@ -1013,6 +1022,17 @@ class PreferencesDialog(Adw.PreferencesDialog):
         ffmpeg = Adw.ActionRow(title="ffmpeg", subtitle="Installed" if ffmpeg_available()
                                else "Not installed — needed for HD YouTube. Run: sudo apt install ffmpeg")
         g.add(ffmpeg)
+        names = ["Don't use"] + [b.capitalize() for b in BROWSERS]
+        signin = Adw.ComboRow(
+            title="Sign-in from browser",
+            subtitle="When YouTube asks to confirm you're not a bot, use your sign-in from this browser. "
+                     "Close Chrome / Edge first — they lock it while open.",
+            model=Gtk.StringList.new(names))
+        current = self.app.manager.settings.get("cookies_browser", "")
+        signin.set_selected(BROWSERS.index(current) + 1 if current in BROWSERS else 0)
+        signin.connect("notify::selected", lambda r, _p: self._set(
+            "cookies_browser", BROWSERS[r.get_selected() - 1] if r.get_selected() else ""))
+        g.add(signin)
         page.add(g)
         self.add(page)
         self.add(self._network_page())

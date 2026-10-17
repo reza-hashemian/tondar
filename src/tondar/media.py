@@ -41,8 +41,47 @@ def _search_path():
     return os.pathsep.join([os.path.join(data_dir(), "bin"), os.environ.get("PATH", "")])
 
 
+# YouTube asks some networks (VPNs, data centers, shared IPs) to sign in before it plays anything.
+BOT_CHECK = re.compile(r"confirm you.?re not a bot|sign in to confirm|Use --cookies-from-browser", re.I)
+YOUTUBE = re.compile(r"(^|\.)(youtube\.com|youtu\.be|youtube-nocookie\.com)$")
+BROWSERS = ["firefox", "chrome", "edge", "brave", "chromium", "opera", "vivaldi", "safari"]
+_settings = {"cookies_browser": ""}
+
+
+def configure(settings):
+    """Options from Preferences that change how yt-dlp is run."""
+    browser = (settings.get("cookies_browser") or "").lower()
+    _settings["cookies_browser"] = browser if browser in BROWSERS else ""
+
+
+def is_youtube(url):
+    return bool(YOUTUBE.search(urllib.parse.urlparse(url or "").hostname or ""))
+
+
+def is_bot_check(error):
+    return bool(error) and bool(BOT_CHECK.search(error))
+
+
+def _bot_help():
+    if _settings["cookies_browser"]:
+        name = _settings["cookies_browser"].capitalize()
+        return (f"YouTube wants you to sign in to confirm you're not a bot, and the sign-in from {name} "
+                f"didn't help.\n"
+                f"• Open youtube.com in {name}, make sure you're signed in, play any video, then press Try Again.\n"
+                f"• Close {name} completely (Chrome and Edge lock their cookies while open) and try again.\n"
+                f"• Turn off your VPN/proxy or try another network.")
+    return ("YouTube wants you to sign in to confirm you're not a bot. This happens on some networks "
+            "(VPN, proxy, shared or data-center connections), not because of the link.\n"
+            "• Sign in to youtube.com in your browser and send the video with Download with Tondar.\n"
+            "• Or open Preferences → Video downloads → \"Sign-in from browser\" and pick the browser you use "
+            "YouTube in, then press Try Again.\n"
+            "• Or turn off your VPN/proxy, or try another network.")
+
+
 def _friendly(error):
     """Turn yt-dlp errors ordinary users can fix themselves into instructions."""
+    if is_bot_check(error):
+        return _bot_help()
     if "PhantomJS not found" in error:
         folder = os.path.join(data_dir(), "bin")
         os.makedirs(folder, exist_ok=True)
@@ -76,9 +115,34 @@ def needs_guest_mode(error):
 
 
 def _attempts(item):
-    """(with_cookies, generic) tries for yt-dlp, in order."""
-    normal = [(True, False), (False, False)] if cookies_allowed(item) else [(False, False)]
-    return [(False, True)] + normal if item.guest else normal
+    """(cookies, generic) tries for yt-dlp, in order. cookies: None, "page" (the ones the browser
+    sent with the link) or "browser" (yt-dlp reads the sign-in from the browser chosen in Preferences)."""
+    normal = [("page", False), (None, False)] if cookies_allowed(item) else [(None, False)]
+    return [(None, True)] + normal if item.guest else normal
+
+
+def _more_attempts(item, error, tried):
+    """What to try next after every planned attempt failed with `error`."""
+    extra = []
+    if is_bot_check(error):
+        # YouTube's bot check: only a signed-in session gets past it.
+        if item.cookies and ("page", False) not in tried:
+            extra.append(("page", False))
+        if _settings["cookies_browser"] and ("browser", False) not in tried:
+            extra.append(("browser", False))
+    elif needs_guest_mode(error) and (None, True) not in tried:
+        extra.append((None, True))  # no account: read the page like a visitor
+    return extra
+
+
+def _cookie_args(item, mode):
+    """yt-dlp arguments for a cookie mode, and a temporary file to delete afterwards."""
+    if mode == "page":
+        path = write_cookie_file(item, force=True)
+        return (["--cookies", path], path) if path else ([], None)
+    if mode == "browser" and _settings["cookies_browser"]:
+        return ["--cookies-from-browser", _settings["cookies_browser"]], None
+    return [], None
 
 
 def _bundled_ffmpeg():
@@ -142,17 +206,15 @@ def _header_args(item, proxy=None):
     return args
 
 
-# YouTube rejects logged-in browser cookies used outside the browser
-# ("The page needs to be reloaded"), and public videos don't need them.
-NO_COOKIE_SITES = re.compile(r"(^|\.)(youtube\.com|youtu\.be|youtube-nocookie\.com)$")
-
-
+# YouTube rejects logged-in browser cookies used outside the browser ("The page needs to be
+# reloaded"), and public videos don't need them: they're only tried after a bot check.
 def cookies_allowed(item):
-    return bool(item.cookies) and not NO_COOKIE_SITES.search(urllib.parse.urlparse(item.url).hostname or "")
+    return bool(item.cookies) and not is_youtube(item.url)
 
 
-def write_cookie_file(item):
-    if not cookies_allowed(item):
+def write_cookie_file(item, force=False):
+    """The cookies the browser sent with this link, as a temporary file for yt-dlp (deleted after use)."""
+    if not item.cookies or not (force or cookies_allowed(item)):
         return None
     folder = os.path.join(data_dir(), "cookies")
     os.makedirs(folder, mode=0o700, exist_ok=True)
@@ -200,34 +262,34 @@ def probe_media(item, playlist=False, proxy=None):
 def _probe(cmd, item, url, playlist, proxy):
     first_error = None
     attempts = _attempts(item)
-    tried = set(attempts)
     i = 0
     while i < len(attempts):
-        with_cookies, generic = attempts[i]
+        mode, generic = attempts[i]
         i += 1
-        cookie_file = write_cookie_file(item) if with_cookies else None
+        cookie_args, cookie_file = _cookie_args(item, mode)
         args = cmd + ["-J", "--flat-playlist", "--yes-playlist" if playlist else "--no-playlist", "--no-warnings"]
-        args += _header_args(item, proxy) + _encoding_args()
+        args += _header_args(item, proxy) + _encoding_args() + cookie_args
         if generic:
             args.append("--force-generic-extractor")
-        if cookie_file:
-            args += ["--cookies", cookie_file]
         try:
             proc = subprocess.run(args + ["--", url], capture_output=True, timeout=120, **_proc_kwargs())
         finally:
-            if cookie_file:
+            if cookie_file and os.path.exists(cookie_file):
                 os.unlink(cookie_file)
         if proc.returncode == 0:
             info = json.loads(proc.stdout)
             if generic:
                 info["_tondar_guest"] = True  # download it the same way
+            if mode:
+                info["_tondar_cookies"] = mode
             return info
         err = [line for line in proc.stderr.splitlines() if line.startswith("ERROR")]
         error = (err[-1] if err else proc.stderr.strip()[-300:]) or "yt-dlp failed"
+        if is_bot_check(error):
+            first_error = error  # the one thing the user can fix; the other errors only follow from it
         first_error = first_error or error
-        if i == len(attempts) and (False, True) not in tried and needs_guest_mode(error):
-            attempts.append((False, True))  # no account: read the page like a visitor
-            tried.add((False, True))
+        if i == len(attempts):
+            attempts += _more_attempts(item, error, attempts)
     raise RuntimeError(_friendly(first_error))
 
 
@@ -550,26 +612,31 @@ class MediaTask:
     def _try(self, cmd, name, url):
         """Download `url`; returns yt-dlp's error, or None when done or stopped."""
         attempts = _attempts(self.item)
+        mode = getattr(self.item, "cookie_mode", "")
+        if mode and (mode, False) in _more_attempts(self.item, "confirm you're not a bot", []):
+            attempts.insert(0, (mode, False))  # what worked when the link was checked
         first_error = None
         i = 0
         while i < len(attempts):
-            with_cookies, generic = attempts[i]
+            mode, generic = attempts[i]
             i += 1
-            rc, tail = self._run_ytdlp(cmd, name, url, with_cookies, generic)
+            rc, tail = self._run_ytdlp(cmd, name, url, mode, generic)
             if rc == 0 or self.stopped.is_set():
                 if generic:
                     self.item.guest = True
                 return None
             errors = [line for line in tail if line.startswith("ERROR")]
             error = errors[-1] if errors else (tail[-1] if tail else f"yt-dlp exited with {rc}")
+            if is_bot_check(error):
+                first_error = error
             first_error = first_error or error
-            if i == len(attempts) and (False, True) not in attempts and needs_guest_mode(error):
-                attempts.append((False, True))  # no account: read the page like a visitor
+            if i == len(attempts):
+                attempts += _more_attempts(self.item, error, attempts)
         return first_error
 
-    def _run_ytdlp(self, cmd, name, url, with_cookies, generic=False):
+    def _run_ytdlp(self, cmd, name, url, mode, generic=False):
         it = self.item
-        cookie_file = write_cookie_file(it) if with_cookies else None
+        cookie_args, cookie_file = _cookie_args(it, mode)
         args = cmd + [
             "--newline", "--progress", "--no-color", "--no-playlist", "--no-mtime",
             "-f", it.media_format or "bv*+ba/b",
@@ -581,8 +648,7 @@ class MediaTask:
         ] + _header_args(it, self.proxy) + _ffmpeg_args() + _encoding_args()
         if generic:
             args.append("--force-generic-extractor")
-        if cookie_file:
-            args += ["--cookies", cookie_file]
+        args += cookie_args
         if self.limiter.rate > 0:
             args += ["-r", str(int(self.limiter.rate))]
         args += ["--", url]

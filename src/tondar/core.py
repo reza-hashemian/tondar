@@ -52,6 +52,9 @@ DEFAULT_SETTINGS = {
     "schedule_all": False,  # also start every unfinished download, not only scheduled ones
     "schedule_done_action": "nothing",  # "nothing", "quit", "shutdown"
     "schedule_last": "",  # date of the last session that was started
+    # yt-dlp may read the YouTube sign-in from this browser when YouTube asks to prove you're not a bot
+    # ("" = never).
+    "cookies_browser": "",
 }
 
 
@@ -60,7 +63,7 @@ class Item:
         "id", "url", "kind", "filename", "folder", "size", "done", "status", "error", "created",
         "finished", "segments", "resumable", "referer", "user_agent", "cookies", "max_segments",
         "media_format", "title", "page_url", "scheduled", "auto_folder", "guest",
-        "container", "clip_start", "clip_end", "popup",
+        "container", "clip_start", "clip_end", "popup", "cookie_mode",
         "clone_depth", "clone_max_pages", "clone_external", "clone_files", "clone_max_mb", "clone_robots",
         "site_entry", "files_done", "files_total", "files_failed",
     )
@@ -99,6 +102,8 @@ class Item:
         self.clip_end = -1.0
         # Show the progress window and the "Download complete" window for this download.
         self.popup = False
+        # Which sign-in got past a bot check when the link was checked ("", "page" or "browser").
+        self.cookie_mode = ""
         # Website clones: how far to follow links (-1 = the whole site) and what to save with the pages.
         self.clone_depth = -1
         self.clone_max_pages = 1000
@@ -215,6 +220,8 @@ class Manager:
 
     def apply_settings(self):
         self.limiter.rate = int(self.settings["speed_limit_kb"]) * 1024
+        from . import media
+        media.configure(self.settings)
 
     def changed(self):
         self._dirty = True
