@@ -15,7 +15,8 @@ from . import APP_ID, VERSION, ipc  # noqa: E402
 from .core import COMPLETED, Item, Manager  # noqa: E402
 from .dialogs import AddWindow, BrowserDialog, CloneWindow, PreferencesDialog  # noqa: E402
 from .popups import CompleteWindow, ProgressWindow  # noqa: E402
-from .util import MACOS, WINDOWS, looks_like_media_page, sanitize_filename, unique_path  # noqa: E402
+from .media import audio_selector  # noqa: E402
+from .util import MACOS, WINDOWS, clean_page_title, looks_like_media_page, sanitize_filename, unique_path  # noqa: E402
 from .window import MainWindow, bring_to_front, open_folder, open_uri  # noqa: E402
 
 
@@ -28,6 +29,11 @@ class App(Adw.Application):
         self.manager = None
         self.window = None
         self.progress_windows = {}  # item id -> ProgressWindow
+        # Links from the browser wait here while a New Download window for another link is open:
+        # with one window per link they all opened on the same spot, the main window came up
+        # over the older ones, and only the last link was ever downloaded.
+        self.browser_dialog = None
+        self.pending = []
         GLib.set_application_name("Tondar")
 
     def do_startup(self):
@@ -117,9 +123,77 @@ class App(Adw.Application):
         self.window.present()
         return self.window
 
-    def open_add_dialog(self, request):
-        bring_to_front(AddWindow(self, request))
+    def open_add_dialog(self, request, from_browser=False):
+        if from_browser:
+            if self.browser_dialog is not None:
+                self.pending.append(request)
+                self.browser_dialog.update_pending(len(self.pending))
+                bring_to_front(self.browser_dialog)
+                return False
+            win = AddWindow(self, request)
+            self.browser_dialog = win
+            # "destroy" doesn't come while Python still holds the window: watch the closing itself.
+            win.connect("close-request", lambda w: GLib.idle_add(self._browser_dialog_closed, w) and False)
+            win.update_pending(len(self.pending))
+        else:
+            win = AddWindow(self, request)
+        bring_to_front(win)
         return False
+
+    def _browser_dialog_closed(self, win):
+        if self.browser_dialog is win and not win.get_visible():
+            self.browser_dialog = None
+            if self.pending:
+                self.open_add_dialog(self.pending.pop(0), True)
+        return False
+
+    def add_pending_now(self):
+        """"Add All": the links still waiting get the default choices."""
+        waiting, self.pending = self.pending, []
+        added = [self.quick_add(req, show=False) for req in waiting]
+        if self.browser_dialog:
+            self.browser_dialog.update_pending(0)
+        n = sum(1 for a in added if a)
+        if n and self.window and self.window.get_visible():
+            self.window.toast(f"Added {n} more download{'s' if n != 1 else ''}")
+
+    def quick_add(self, req, show=True):
+        """Add a link from the browser with the default choices (no New Download window)."""
+        m = self.manager
+        url = (req.get("url") or "").strip()
+        if not url:
+            return None
+        name = sanitize_filename(req.get("filename") or "", "")
+        media = (req.get("kind") == "media" or looks_like_media_page(url) or req.get("clip")
+                 or req.get("container") or req.get("audio"))
+        item = Item(
+            url=url, kind="media" if media else "http", referer=req.get("referer", ""),
+            user_agent=req.get("user_agent", ""), cookies=req.get("cookies", []), page_url=req.get("page_url", ""),
+            max_segments=int(m.settings["segments"]), size=int(req.get("size") or -1), popup=True,
+        )
+        clip = req.get("clip") if isinstance(req.get("clip"), dict) else None
+        if clip:
+            item.clip_start = _num(clip.get("start"), -1)
+            item.clip_end = _num(clip.get("end"), -1)
+            if item.clip_start <= 0:
+                item.clip_start = -1 if item.clip_end < 0 else 0
+        if media:
+            container = req.get("container") or ""
+            audio = bool(req.get("audio"))
+            item.media_format = audio_selector(container) if audio else "bv*+ba/b"
+            item.container = container
+            item.title = sanitize_filename(clean_page_title(req.get("title") or ""), "")
+            item.folder, item.auto_folder = m.pick_folder(item.title or url, "media", audio)
+        else:
+            item.folder, item.auto_folder = m.pick_folder(name or url)
+            if name:
+                item.filename = unique_path(item.folder, name, m.taken_paths())
+        added = m.add(item, start=True)
+        if show and added is not item and self.window and self.window.get_visible():
+            self.window.toast(f"Already in the list: “{added.display_name}”")
+        if added is item or added.status not in (COMPLETED,):
+            self.show_progress(added, force=added is not item)
+        return added
 
     def open_clone_dialog(self, url):
         bring_to_front(CloneWindow(self, url))
@@ -154,29 +228,15 @@ class App(Adw.Application):
         if req.get("kind") == "site":
             self.open_clone_dialog(url)
             return
-        media = req.get("kind") == "media" or looks_like_media_page(url) or req.get("clip") or req.get("container")
+        media = (req.get("kind") == "media" or looks_like_media_page(url) or req.get("clip")
+                 or req.get("container") or req.get("audio"))
         if self.manager.settings["confirm_browser"] or media:  # videos always need a quality choice
-            self.open_add_dialog(req)
+            self.open_add_dialog(req, from_browser=True)
             return
-        m = self.manager
-        name = sanitize_filename(req.get("filename") or "", "")
-        item = Item(
-            url=url, kind="http", referer=req.get("referer", ""), user_agent=req.get("user_agent", ""),
-            cookies=req.get("cookies", []), page_url=req.get("page_url", ""),
-            max_segments=int(m.settings["segments"]), size=int(req.get("size") or -1), popup=True,
-        )
-        item.folder, item.auto_folder = m.pick_folder(name or url)
-        if name:
-            item.filename = unique_path(item.folder, name, m.taken_paths())
-        added = m.add(item, start=True)
-        if added is item and m.settings.get("progress_window", True):
-            self.present_main()
-            self.show_progress(item)
-            return
-        win = self.present_main()
-        bring_to_front(win)  # show the new download in the list
-        if added is not item:
-            win.toast(f"Already in the list: “{added.display_name}”")
+        if not self.manager.settings.get("progress_window", True):
+            win = self.present_main()
+            bring_to_front(win)  # show the new download in the list
+        self.quick_add(req)
 
     # --- periodic update --------------------------------------------------------------------
     def _tick(self):
@@ -323,3 +383,10 @@ def main(argv=None):
     if (WINDOWS or MACOS) and not ipc.acquire_instance(argv[1:]):
         return 0  # an instance is already running (or starting) and took over
     return App().run(argv)
+
+
+def _num(v, default):
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return default

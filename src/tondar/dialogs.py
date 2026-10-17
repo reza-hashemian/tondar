@@ -60,6 +60,10 @@ class AddWindow(Adw.Window):
 
         view = Adw.ToolbarView()
         view.add_top_bar(Adw.HeaderBar())
+        # More links sent from the browser while this window is open wait for their turn.
+        self.pending_banner = Adw.Banner(button_label="Add All Now")
+        self.pending_banner.connect("button-clicked", lambda *_: self.app.add_pending_now())
+        view.add_top_bar(self.pending_banner)
 
         page = Adw.PreferencesPage()
         g1 = Adw.PreferencesGroup()
@@ -193,6 +197,13 @@ class AddWindow(Adw.Window):
     @property
     def is_media(self):
         return self.mode_row.get_selected() == 1
+
+    def update_pending(self, count):
+        if count:
+            self.pending_banner.set_title(
+                f"{count} more link{'s' if count != 1 else ''} from the browser — "
+                f"{'they open' if count != 1 else 'it opens'} here next")
+        self.pending_banner.set_revealed(count > 0)
 
     # --- helpers ----------------------------------------------------------------------
     def _paste_from_clipboard(self):
