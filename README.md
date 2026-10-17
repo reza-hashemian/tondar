@@ -356,7 +356,7 @@ sudo apt install ./tondar_*_all.deb ffmpeg
   - اضافه یا حذف از زمان‌بندی
   - حذف از لیست، یا پاک کردن خود فایل
 - نوار کنار صفحه دانلودها رو بر اساس وضعیت (Downloading، Unfinished، Completed، Scheduled) و نوع (Video، Music، Compressed و…) جدا می‌کنه. با کادر جستجو هم می‌تونی دانلود رو پیدا کنی.
-- بستن پنجره برنامه رو نمی‌بنده و دانلودها ادامه پیدا می‌کنن. آیکون تندر کنار ساعت (Notification area ویندوز؛ اگه نمی‌بینیش روی **^** بزن و برای همیشه‌ای دیده شدن بکشش روی تسک‌بار) یا توی System tray لینوکس می‌مونه. با کلیک روش تندر باز می‌شه و با راست‌کلیک منوی **Show Tondar**، **New Download**، **Clone Website**، **Resume All**، **Pause All**، **Preferences** و **Quit Tondar** میاد. روی GNOME برای دیدن آیکون، افزونه‌ی «AppIndicator and KStatusNotifierItem Support» لازمه (اوبونتو خودش داره). برای بستن کامل از ☰ هم می‌شه **Quit** رو زد.
+- بستن پنجره برنامه رو نمی‌بنده و دانلودها ادامه پیدا می‌کنن. آیکون تندر کنار ساعت (Notification area ویندوز؛ اگه نمی‌بینیش روی **^** بزن و برای اینکه همیشه دیده بشه بکشش روی تسک‌بار) یا توی System tray لینوکس می‌مونه. با کلیک روش تندر باز می‌شه و با راست‌کلیک منوی **Show Tondar**، **New Download**، **Clone Website**، **Resume All**، **Pause All**، **Preferences** و **Quit Tondar** میاد. روی GNOME برای دیدن آیکون، افزونه‌ی «AppIndicator and KStatusNotifierItem Support» لازمه (اوبونتو خودش داره). برای بستن کامل از ☰ هم می‌شه **Quit** رو زد.
 
 **زمان‌بندی** (از ☰ گزینه‌ی **Scheduler**)
 - **Enable scheduler** رو روشن کن. ساعت **شروع**، اگه خواستی ساعت **توقف**، و **روزهای** هفته رو انتخاب کن.
