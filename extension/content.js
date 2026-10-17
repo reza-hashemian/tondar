@@ -30,7 +30,8 @@
           box-shadow: 0 2px 8px rgba(0,0,0,.45); opacity: .85; transition: opacity .15s, background .15s; }
         .close:hover { opacity: 1; background: #e03131; }
         .close svg { width: 10px; height: 10px; }
-        .menu { position: fixed; display: none; min-width: 280px; max-width: 420px; max-height: 60vh; overflow: auto;
+        .menu { position: fixed; display: none; width: min(360px, calc(100vw - 8px)); max-height: 70vh;
+          overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain;
           background: #232326; color: #eee; border-radius: 12px; padding: 6px; box-shadow: 0 8px 30px rgba(0,0,0,.5);
           border: 1px solid rgba(255,255,255,.08); }
         .item { display: block; width: 100%; text-align: left; background: none; border: 0; color: inherit;
@@ -47,20 +48,22 @@
           margin: 0 0 6px; }
         .clip-head { display: flex; align-items: center; gap: 8px; cursor: pointer; font-weight: 600; }
         .clip-head input { accent-color: #f76707; width: 15px; height: 15px; margin: 0; }
-        .clip-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px; }
+        .clip-row { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
         .clip-row[hidden] { display: none; }
-        .field { display: flex; flex-direction: column; gap: 3px; }
-        .field span { font-size: 11px; opacity: .6; }
-        .field div { display: flex; gap: 4px; }
-        .field input { flex: 1; min-width: 0; padding: 6px 8px; border-radius: 7px; border: 1px solid rgba(255,255,255,.14);
-          background: #2c2c30; color: #fff; font-variant-numeric: tabular-nums; }
+        .field { display: grid; grid-template-columns: 44px minmax(0, 1fr) auto; align-items: center; gap: 6px; }
+        .field span { font-size: 12px; opacity: .7; }
+        .field input { display: block; width: 100%; min-width: 0; height: 30px; margin: 0; padding: 0 9px; border-radius: 7px;
+          border: 1px solid rgba(255,255,255,.14); background: #2c2c30; color: #fff; font-variant-numeric: tabular-nums;
+          appearance: none; }
+        .field input::placeholder { color: rgba(255,255,255,.4); }
         .field input:focus { outline: 2px solid #f76707; outline-offset: -1px; }
         .field input.bad { border-color: #ff6b6b; }
-        .now { padding: 0 8px; border-radius: 7px; border: 0; background: #3a3a3f; color: #eee; cursor: pointer; font-size: 11.5px; }
+        .now { height: 30px; margin: 0; padding: 0 10px; border-radius: 7px; border: 0; background: #3a3a3f; color: #eee;
+          cursor: pointer; font-size: 12px; white-space: nowrap; }
         .now:hover { background: #4a4a50; }
-        .hint { grid-column: 1 / -1; font-size: 11px; opacity: .55; }
+        .hint { font-size: 11px; opacity: .55; padding-left: 50px; }
         .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; align-items: center; }
-        .chips .opt-title { margin: 0 4px 0 0; }
+        .chips .opt-title { flex-basis: 100%; margin: 0; }
         .chip { padding: 4px 10px; border-radius: 999px; border: 1px solid rgba(255,255,255,.16); background: none;
           color: #ddd; cursor: pointer; font-size: 12px; }
         .chip:hover { background: rgba(255,255,255,.08); }
@@ -417,9 +420,7 @@
         e.preventDefault();
         if (video) { input.value = opts[key] = fmtTime(video.currentTime); input.classList.remove("bad"); }
       });
-      const line = el("div");
-      line.append(input, now);
-      f.append(el("span", "", label), line);
+      f.append(el("span", "", label), input, now);
       return [f, input];
     };
     const [fromField, fromInput] = field("From", "start", "0:00");
