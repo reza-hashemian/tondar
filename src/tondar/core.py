@@ -65,6 +65,7 @@ class Item:
         "media_format", "title", "page_url", "scheduled", "auto_folder", "guest",
         "container", "clip_start", "clip_end", "popup", "cookie_mode",
         "clone_depth", "clone_max_pages", "clone_external", "clone_files", "clone_max_mb", "clone_robots",
+        "clone_scope", "clone_update",
         "site_entry", "files_done", "files_total", "files_failed",
     )
 
@@ -111,6 +112,10 @@ class Item:
         self.clone_files = True
         self.clone_max_mb = 200
         self.clone_robots = True
+        # Which pages to follow: "site" (this website only), "subdomains" (also blog.…, shop.…) or "all".
+        self.clone_scope = "site"
+        # Clone into a folder that has an earlier copy of the site: only what changed is downloaded.
+        self.clone_update = False
         self.site_entry = ""  # the start page inside the clone's folder
         self.files_done = 0
         self.files_total = 0
@@ -289,7 +294,10 @@ class Manager:
         if item.scheduled and self._session:
             start = True  # the scheduled time window is open right now
             self._session_ids.add(item.id)
-        if item.filename and item.kind == "site":
+        if item.filename and item.kind == "site" and item.clone_update:
+            for old in [i for i in self.items if i.kind == "site" and i.path == item.path and i.status in (COMPLETED, PAUSED, ERROR)]:
+                self.remove(old, save=False)  # the new clone updates the same folder
+        elif item.filename and item.kind == "site":
             item.filename = self._free_folder_name(item.folder, item.filename)
         elif item.filename:
             item.filename = unique_path(item.folder, item.filename, self.taken_paths())

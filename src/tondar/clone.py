@@ -23,6 +23,9 @@ import zlib
 from .http_task import DEFAULT_UA, build_opener
 
 STATE_FILE = ".tondar-clone.json"
+# What was saved last time (address, ETag / Last-Modified, links): cloning into the same folder
+# again asks the server "changed since?" and only downloads what did change.
+CACHE_FILE = ".tondar-cache.json"
 CHUNK = 64 * 1024
 PAGE_EXTS = {"", "html", "htm", "xhtml", "shtml", "php", "php3", "asp", "aspx", "jsp", "jspx", "cfm", "cgi", "pl", "do"}
 CSS_EXTS = {"css"}
@@ -69,8 +72,16 @@ class TooBig(Exception):
     pass
 
 
+# Query parameters that only track where a visitor came from: the same page without them.
+TRACKING = re.compile(r"^(utm_[a-z]+|fbclid|gclid|dclid|gbraid|wbraid|msclkid|yclid|mc_cid|mc_eid|igshid|_ga|_gl|"
+                      r"ref_src|spm|__s|_hsenc|_hsmi|mkt_tok|oly_enc_id|oly_anon_id|vero_id|si)$", re.I)
+# Second-level names under which a site's own domain has three parts (example.co.uk, example.ac.ir).
+SECOND_LEVEL = {"co", "com", "net", "org", "ac", "gov", "edu", "or", "ne", "go", "gob", "nic", "sch", "id", "ltd", "plc"}
+
+
 def normalize(url):
-    """Comparable form of a link: no fragment, lower-case host, no default port, "/" for an empty path."""
+    """Comparable form of a link: no fragment, lower-case host, no default port, "/" for an empty path,
+    query parameters sorted and tracking ones (utm_…, fbclid…) left out."""
     try:
         u = urllib.parse.urlsplit(url.strip())
     except ValueError:
@@ -87,7 +98,31 @@ def normalize(url):
     path = u.path or "/"
     # Spaces and non-ASCII characters in links: one spelling per file.
     path = urllib.parse.quote(urllib.parse.unquote(path), safe="/%:@!$&'()*+,;=-._~")
-    return urllib.parse.urlunsplit((u.scheme, host, path, u.query, ""))
+    query = u.query
+    if query:
+        params = [p for p in query.split("&") if p and not TRACKING.match(p.split("=", 1)[0])]
+        query = "&".join(sorted(params))
+    return urllib.parse.urlunsplit((u.scheme.lower(), host, path, query, ""))
+
+
+def page_key(url):
+    """One key for the addresses of the same page: "/dir/" and "/dir/index.html"."""
+    head, _, last = url.rpartition("/")
+    base, sep, query = last.partition("?")
+    if base.lower() in ("index.html", "index.htm"):
+        return head + "/" + (sep + query if sep else "")
+    return url
+
+
+def site_domain(host):
+    """The site's own domain of a host name: blog.example.com → example.com, www.x.co.uk → x.co.uk."""
+    host = host.split(":")[0]
+    parts = host.split(".")
+    if len(parts) <= 2 or re.fullmatch(r"[\d.]+", host):
+        return host
+    if len(parts[-1]) == 2 and parts[-2] in SECOND_LEVEL:
+        return ".".join(parts[-3:])
+    return ".".join(parts[-2:])
 
 
 def _same_page(a, b):
@@ -311,17 +346,22 @@ class SiteTask:
         host = urllib.parse.urlsplit(start).netloc
         bare = host[4:] if host.startswith("www.") else host
         self.hosts = {bare, "www." + bare}
+        self.scope = getattr(it, "clone_scope", "site") or "site"
+        self.domain = site_domain(bare)
         self.max_depth = int(it.clone_depth)  # -1 = no limit
         self.max_pages = max(1, int(it.clone_max_pages or 1))
         self.max_bytes = int(it.clone_max_mb or 0) * 1024 * 1024
         self.urls = {}  # normalized url -> relative path of its file
         self.files = {}  # relative path -> {"url": final url, "type": "html"|"css"|"other"}
         self.failed = {}  # url -> reason
-        self.seen = set()
+        self.seen = set()  # page_key() of every address queued or saved
         self.queue = []  # (url, kind, depth, referer)
         self.pages = 0
         self.busy = 0
         self.robots = None
+        self.hashes = {}  # sha1 of a file's content -> its relative path: one copy of identical files
+        self.cache = self._load_cache()  # url -> what was saved last time
+        self.reused = 0
         if it.done == 0 or not self._load_state():
             self._reset()
             with self._cond:
@@ -336,6 +376,7 @@ class SiteTask:
             reason = self.failed.get(start, "the page could not be downloaded")
             raise RuntimeError(f"Couldn't open {it.url}: {reason}")
         self._rewrite_all()
+        self._save_cache()
         it.site_entry = self.urls[start]
         it.files_total = it.files_done
         it.files_failed = len(self.failed)
@@ -367,14 +408,24 @@ class SiteTask:
 
     # --- the queue ------------------------------------------------------------------------------
     def _in_scope(self, url):
+        """On the website that is cloned (with or without "www."): saved in the main folder."""
         return urllib.parse.urlsplit(url).netloc in self.hosts
+
+    def _follow(self, url):
+        """May pages at `url` be cloned? Depends on "Only this website" / "Include subdomains"."""
+        if self._in_scope(url) or self.scope == "all":
+            return True
+        if self.scope == "subdomains":
+            host = (urllib.parse.urlsplit(url).hostname or "").lower()
+            return host == self.domain or host.endswith("." + self.domain)
+        return False
 
     def _add(self, url, kind, depth, referer, force=False):
         """Queue a link found in a page (called with the lock held)."""
-        if not url or url in self.seen:
+        if not url or page_key(url) in self.seen:
             return
         it = self.item
-        inside = self._in_scope(url)
+        inside = self._follow(url)
         ext = url_ext(url)
         if kind == "page":
             if not inside:
@@ -400,7 +451,7 @@ class SiteTask:
             if not inside and not it.clone_external:
                 return
             kind = "res"
-        self.seen.add(url)
+        self.seen.add(page_key(url))
         self.queue.append((url, kind, depth, referer))
         it.files_total = it.files_done + len(self.queue) + self.busy
         self._cond.notify()
@@ -447,17 +498,29 @@ class SiteTask:
 
     # --- downloading ------------------------------------------------------------------------------
     def _fetch_one(self, url, kind, depth, referer):
+        with self._lock:
+            if url in self.urls:
+                return  # saved meanwhile under another address that redirected here
         headers = {"User-Agent": self.ua, "Accept": "*/*", "Accept-Encoding": "gzip, deflate"}
         if kind == "page":
             headers["Accept"] = "text/html,application/xhtml+xml,*/*;q=0.8"
         if referer:
             headers["Referer"] = referer
+        old = self._cached(url)
+        if old:
+            if old.get("etag"):
+                headers["If-None-Match"] = old["etag"]
+            if old.get("modified"):
+                headers["If-Modified-Since"] = old["modified"]
         for attempt in range(3):
             try:
                 with self.opener.open(urllib.request.Request(url, headers=headers), timeout=30) as r:
                     self._save(r, url, kind, depth)
                 return
             except urllib.error.HTTPError as e:
+                if e.code == 304 and old:
+                    self._reuse(url, old, depth)  # unchanged since the last clone
+                    return
                 if e.code < 500 or attempt == 2:
                     raise RuntimeError(f"HTTP {e.code}") from None
             except (TooBig, OSError) as e:
@@ -503,9 +566,39 @@ class SiteTask:
             n += 1
         return candidate
 
+    def _cached(self, url):
+        """What the last clone into this folder saved for `url`, if its file is still there."""
+        old = self.cache.get(url)
+        if old and old.get("rel") and os.path.isfile(os.path.join(self.root, *old["rel"].split("/"))):
+            return old
+        return None
+
+    def _reuse(self, url, old, depth):
+        """Keep the file from the last clone (the server says it didn't change) and follow its links again."""
+        rel = old["rel"]
+        with self._lock:
+            final = old.get("url") or url
+            self.urls[url] = self.urls[final] = rel
+            # Already rewritten for offline use last time: don't rewrite it again.
+            self.files[rel] = {"url": final, "type": "done", "links": old.get("links") or [],
+                               **{k: old[k] for k in ("etag", "modified", "sha1") if old.get(k)}}
+            self.seen.add(page_key(final))
+            if old.get("sha1"):
+                self.hashes.setdefault(old["sha1"], rel)
+            self.item.files_done += 1
+            self.reused += 1
+            for kind, link in old.get("links") or []:
+                self._add(link, kind, depth + 1 if kind == "page" else depth, final)
+            self._cond.notify_all()
+
     def _save(self, r, url, kind, depth):
         it = self.item
         final = normalize(r.geturl()) or url
+        with self._lock:
+            if final != url and final in self.urls:  # redirected to a file we already have
+                self.urls[url] = self.urls[final]
+                it.files_done += 1
+                return
         ctype = r.headers.get_content_type() if r.headers.get("Content-Type") else ""
         length = r.headers.get("Content-Length")
         limit = self.max_bytes if kind in ("file", "res") else 0
@@ -520,7 +613,8 @@ class SiteTask:
                 self.seen.add(final)
                 it.files_done += 1
                 return
-            self.files[rel] = {"url": final, "type": ftype}
+            self.files[rel] = {"url": final, "type": ftype,
+                               "etag": r.headers.get("ETag") or "", "modified": r.headers.get("Last-Modified") or ""}
         path = os.path.join(self.root, *rel.split("/"))
         os.makedirs(os.path.dirname(path), exist_ok=True)
         enc = (r.headers.get("Content-Encoding") or "").lower()
@@ -529,8 +623,9 @@ class SiteTask:
         keep = ftype in ("html", "css")
         body = bytearray()
         tmp = path + ".part"
+        digest = hashlib.sha1()
         try:
-            self._receive(r, tmp, inflate, keep, body, limit)
+            self._receive(r, tmp, inflate, keep, body, limit, digest)
         except BaseException:
             with self._lock:
                 if self.files.get(rel, {}).get("url") == final and rel not in self.urls.values():
@@ -549,10 +644,26 @@ class SiteTask:
                 self.files.pop(rel, None)
                 self.queue.insert(0, (url, kind, depth, ""))
             return
+        sha1 = digest.hexdigest()
+        with self._lock:
+            same = self.hashes.get(sha1)
+            if same and same != rel and os.path.isfile(os.path.join(self.root, *same.split("/"))):
+                # The same content under another address (session ids, sorting parameters…): one copy.
+                self.files.pop(rel, None)
+                self.urls[url] = self.urls[final] = same
+                self.seen.add(page_key(final))
+                it.files_done += 1
+                try:
+                    os.unlink(tmp)
+                except OSError:
+                    pass
+                return
+            self.hashes[sha1] = rel
+            self.files[rel]["sha1"] = sha1
         os.replace(tmp, path)
         with self._lock:
             self.urls[url] = self.urls[final] = rel
-            self.seen.add(final)
+            self.seen.add(page_key(final))
             it.files_done += 1
             if ftype == "html" and url == self.start_url and not it.title:
                 m = TITLE.search(bytes(body[:65536]).decode("utf-8", "replace"))
@@ -561,7 +672,7 @@ class SiteTask:
         if keep:
             self._discover(bytes(body), ftype, final, depth, r.headers.get_content_charset())
 
-    def _receive(self, r, tmp, inflate, keep, body, limit):
+    def _receive(self, r, tmp, inflate, keep, body, limit, digest):
         it = self.item
         size = 0
         with open(tmp, "wb") as f:
@@ -580,11 +691,13 @@ class SiteTask:
                 if limit and size > limit:
                     raise TooBig()
                 f.write(chunk)
+                digest.update(chunk)
                 if keep:
                     body += chunk
             if inflate and not self.stopped.is_set():
                 rest = inflate.flush()
                 f.write(rest)
+                digest.update(rest)
                 body += rest if keep else b""
 
     def _discover(self, raw, ftype, page_url, depth, charset=None):
@@ -601,6 +714,9 @@ class SiteTask:
         else:
             transform_css(text, page_url, on_url)
         with self._lock:
+            rel = self.urls.get(page_url)
+            if rel in self.files:
+                self.files[rel]["links"] = found  # for the next clone into this folder
             for kind, url in found:
                 self._add(url, kind, depth + 1 if kind == "page" else depth, page_url)
 
@@ -624,7 +740,7 @@ class SiteTask:
                 frag = ""
                 if "#" in raw_value:
                     frag = "#" + raw_value.split("#", 1)[1]
-                target = self.urls.get(url)
+                target = self.urls.get(url) or self.urls.get(page_key(url))
                 if target is None:
                     # Not saved (outside the site, over a limit): keep a working online link.
                     return None if raw_value.startswith(("http://", "https://")) else url + frag
@@ -652,6 +768,34 @@ class SiteTask:
             for url, why in sorted(self.failed.items()):
                 f.write(f"{url}\t{why}\n")
 
+    # --- what was saved, for the next clone into this folder ----------------------------------------
+    def _load_cache(self):
+        try:
+            with open(os.path.join(self.root, CACHE_FILE), encoding="utf-8") as f:
+                data = json.load(f)
+        except (OSError, ValueError):
+            return {}
+        return data.get("files") or {} if data.get("start") == self.start_url else {}
+
+    def _save_cache(self):
+        files = {}
+        for url, rel in self.urls.items():
+            info = self.files.get(rel)
+            if not info:
+                continue
+            entry = {"rel": rel, "url": info["url"]}
+            for key in ("etag", "modified", "sha1", "links"):
+                if info.get(key):
+                    entry[key] = info[key]
+            files[url] = entry
+        tmp = os.path.join(self.root, CACHE_FILE + ".tmp")
+        try:
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump({"start": self.start_url, "files": files}, f)
+            os.replace(tmp, os.path.join(self.root, CACHE_FILE))
+        except OSError:
+            pass
+
     # --- pause / resume ------------------------------------------------------------------------------
     def _save_state(self):
         state = {"start": self.start_url, "urls": self.urls, "files": self.files, "failed": self.failed,
@@ -676,12 +820,12 @@ class SiteTask:
         self.files = state.get("files") or {}
         self.pages = int(state.get("pages") or 0)
         self.queue = [tuple(q) for q in state.get("queue") or []]
-        self.seen = set(self.urls) | {q[0] for q in self.queue} | {f["url"] for f in self.files.values()}
+        self.seen = {page_key(u) for u in set(self.urls) | {q[0] for q in self.queue} | {f["url"] for f in self.files.values()}}
+        self.hashes = {f["sha1"]: rel for rel, f in self.files.items() if f.get("sha1")}
         # Failed files get another chance.
         for url in state.get("failed") or {}:
-            self.seen.discard(url)
             self.queue.append((url, "res", 0, ""))
-            self.seen.add(url)
+            self.seen.add(page_key(url))
         it = self.item
         it.files_done = len(self.files)
         it.files_total = it.files_done + len(self.queue)

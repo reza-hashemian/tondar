@@ -1,4 +1,5 @@
 import html
+import json
 import os
 import re
 import shutil
@@ -11,6 +12,7 @@ import urllib.request
 from gi.repository import Adw, Gio, GLib, Gtk
 
 from . import APP_ID
+from .clone import CACHE_FILE, normalize, site_domain
 from .core import Item
 from .http_task import probe
 from .media import (
@@ -686,13 +688,6 @@ class AddWindow(Adw.Window):
         self.close()
 
 
-CLONE_DEPTHS = [
-    ("The whole website", -1),
-    ("This page only", 0),
-    ("This page and the pages it links to", 1),
-    ("Two clicks deep", 2),
-    ("Three clicks deep", 3),
-]
 
 
 class CloneWindow(Adw.Window):
@@ -730,9 +725,21 @@ class CloneWindow(Adw.Window):
         page.add(g)
 
         g = Adw.PreferencesGroup(title="What to save")
-        self.depth_row = Adw.ComboRow(title="Pages", model=Gtk.StringList.new([d[0] for d in CLONE_DEPTHS]))
-        self.depth_row.connect("notify::selected", lambda *_: self._update_depth())
+        self.whole_row = Adw.SwitchRow(title="The whole website", active=True,
+                                       subtitle="Follow every link, however far from this page")
+        self.whole_row.connect("notify::active", lambda *_: self._update_depth())
+        g.add(self.whole_row)
+        self.depth_row = Adw.SpinRow.new_with_range(0, 100, 1)
+        self.depth_row.set_title("Link depth")
+        self.depth_row.set_value(2)
+        self.depth_row.connect("notify::value", lambda *_: self._update_depth())
         g.add(self.depth_row)
+        self.same_row = Adw.SwitchRow(title="Only this website", active=True)
+        self.same_row.connect("notify::active", lambda *_: self._update_scope())
+        g.add(self.same_row)
+        self.sub_row = Adw.SwitchRow(title="Include subdomains", active=False)
+        self.sub_row.connect("notify::active", lambda *_: self._update_scope())
+        g.add(self.sub_row)
         self.pages_row = Adw.SpinRow.new_with_range(1, 100000, 50)
         self.pages_row.set_title("At most")
         self.pages_row.set_subtitle("pages, so a huge site doesn't fill your disk")
@@ -771,6 +778,11 @@ class CloneWindow(Adw.Window):
         self.seg_row.set_subtitle("More is faster; some sites block too many")
         self.seg_row.set_value(6)
         g.add(self.seg_row)
+        self.update_row = Adw.SwitchRow(
+            title="Update the copy in this folder", active=True, visible=False,
+            subtitle="This folder has an earlier copy of the site: only pages and files that changed are downloaded")
+        self.update_row.connect("notify::active", lambda *_: self._update_folder_row())
+        g.add(self.update_row)
         page.add(g)
 
         note = Gtk.Label(label="Pages that are put together by JavaScript in the browser may look incomplete offline. "
@@ -803,6 +815,7 @@ class CloneWindow(Adw.Window):
         self.add_controller(esc)
         self._update_folder_row()
         self._update_depth()
+        self._update_scope()
         if url:
             self.url_row.set_text(url)
 
@@ -813,9 +826,40 @@ class CloneWindow(Adw.Window):
             url = "https://" + url
         return url
 
+    def _depth(self):
+        return -1 if self.whole_row.get_active() else int(self.depth_row.get_value())
+
     def _update_depth(self):
-        depth = CLONE_DEPTHS[self.depth_row.get_selected()][1]
+        depth = self._depth()
+        self.depth_row.set_sensitive(depth >= 0)
+        n = int(self.depth_row.get_value())
+        self.depth_row.set_subtitle(
+            "Only this page" if n == 0 else "This page and the pages it links to" if n == 1 else
+            f"Pages up to {n} links away from this page")
         self.pages_row.set_sensitive(depth != 0)
+        self._update_scope()
+
+    def _host(self):
+        url = self._url()
+        return (urllib.parse.urlsplit(url).hostname or "") if "://" in url else ""
+
+    def _scope(self):
+        if not self.same_row.get_active():
+            return "all"
+        return "subdomains" if self.sub_row.get_active() else "site"
+
+    def _update_scope(self):
+        if not hasattr(self, "sub_row"):
+            return
+        host = self._host()
+        bare = host[4:] if host.startswith("www.") else host
+        self.same_row.set_subtitle(f"Follow links on {bare} only" if bare else "Don't follow links to other websites")
+        domain = site_domain(bare) if bare else "example.com"
+        self.sub_row.set_subtitle(f"Also blog.{domain}, shop.{domain}…")
+        self.sub_row.set_sensitive(self.same_row.get_active())
+        if not self.same_row.get_active():
+            self.same_row.set_subtitle("Links to other websites are followed too"
+                                       + (" — use a link depth or a page limit" if self._depth() < 0 else ""))
 
     def _on_name_changed(self):
         if not self._setting_name:
@@ -831,7 +875,20 @@ class CloneWindow(Adw.Window):
     def _update_folder_row(self):
         name = sanitize_filename(self.name_row.get_text().strip(), "")
         path = os.path.join(self._folder, name) if name else self._folder
+        earlier = bool(name) and self._earlier_copy(path)
+        self.update_row.set_visible(earlier)
+        if earlier and not self.update_row.get_active():
+            path = os.path.join(self._folder, self.manager._free_folder_name(self._folder, name))
         self.folder_row.set_subtitle(path.replace(os.path.expanduser("~"), "~", 1))
+
+    def _earlier_copy(self, path):
+        """Does `path` hold an earlier clone of the address being entered?"""
+        try:
+            with open(os.path.join(path, CACHE_FILE), encoding="utf-8") as f:
+                start = json.load(f).get("start")
+        except (OSError, ValueError):
+            return False
+        return bool(start) and start == normalize(self._url())
 
     def _pick_folder(self, _btn):
         start = self._folder if os.path.isdir(self._folder) else self.manager.settings["folder"]
@@ -856,6 +913,9 @@ class CloneWindow(Adw.Window):
         host = urllib.parse.urlsplit(url).hostname if "://" in url else ""
         if host and not self._name_edited:
             self._set_name(sanitize_filename(host, "website"))
+        else:
+            self._update_folder_row()
+        self._update_scope()
 
     def _probe(self):
         self._timer = 0
@@ -907,13 +967,15 @@ class CloneWindow(Adw.Window):
             return
         host = urllib.parse.urlsplit(url).hostname or "website"
         name = sanitize_filename(self.name_row.get_text().strip(), "") or sanitize_filename(host, "website")
-        depth = CLONE_DEPTHS[self.depth_row.get_selected()][1]
+        depth = self._depth()
+        update = self.update_row.get_visible() and self.update_row.get_active()
         item = Item(
             url=url, kind="site", folder=self._folder, filename=name, title=self._title,
             clone_depth=depth, clone_max_pages=1 if depth == 0 else int(self.pages_row.get_value()),
             clone_external=self.external_row.get_active(), clone_files=self.files_row.get_active(),
             clone_max_mb=int(self.size_row.get_value()), clone_robots=self.robots_row.get_active(),
             max_segments=int(self.seg_row.get_value()), popup=True,
+            clone_scope=self._scope(), clone_update=update,
         )
         added = self.manager.add(item, start=start)
         if self.app.window and self.app.window.get_visible():
