@@ -9,3 +9,12 @@ Terminal=false
 Categories=Network;FileTransfer;GTK;
 Keywords=download;manager;idm;video;youtube;
 StartupNotify=true
+Actions=new-download;clone;
+
+[Desktop Action new-download]
+Name=New Download
+Exec=tondar --new-download
+
+[Desktop Action clone]
+Name=Clone Website
+Exec=tondar --clone

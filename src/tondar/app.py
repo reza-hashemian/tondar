@@ -12,7 +12,7 @@ gi.require_version("Adw", "1")
 from gi.repository import Adw, Gio, GLib, Gtk  # noqa: E402
 
 from . import APP_ID, VERSION, ipc  # noqa: E402
-from .core import COMPLETED, Item, Manager  # noqa: E402
+from .core import COMPLETED, DOWNLOADING, QUEUED, Item, Manager  # noqa: E402
 from .dialogs import AddWindow, BrowserDialog, CloneWindow, PreferencesDialog  # noqa: E402
 from .popups import CompleteWindow, ProgressWindow  # noqa: E402
 from .media import audio_selector  # noqa: E402
@@ -28,6 +28,7 @@ class App(Adw.Application):
         super().__init__(application_id=APP_ID, flags=flags)
         self.manager = None
         self.window = None
+        self.tray = None
         self.progress_windows = {}  # item id -> ProgressWindow
         # Links from the browser wait here while a New Download window for another link is open:
         # with one window per link they all opened on the same spot, the main window came up
@@ -80,6 +81,10 @@ class App(Adw.Application):
             action.connect("activate", cb)
             self.add_action(action)
 
+        from . import tray
+
+        self.tray = tray.create(self)
+        self._tray_tick = 0
         GLib.timeout_add(500, self._tick)
 
     def do_activate(self):
@@ -106,6 +111,12 @@ class App(Adw.Application):
                     requests.append(json.loads(base64.urlsafe_b64decode(args[i] + "==")))
                 except ValueError:
                     pass
+                show = False
+            elif arg == "--new-download":  # from the launcher's right-click menu
+                GLib.idle_add(lambda: self.open_add_dialog({}) and False)
+                show = False
+            elif arg == "--clone":
+                GLib.idle_add(lambda: self.open_clone_dialog("") and False)
                 show = False
             elif "://" in arg:
                 requests.append({"url": arg})
@@ -242,12 +253,27 @@ class App(Adw.Application):
     def _tick(self):
         # An exception escaping a GLib timeout removes it for good: downloads would sit in
         # "Waiting in queue" and the window would stop updating.
-        for step in (self.manager.tick, self._refresh_window, self._refresh_progress):
+        for step in (self.manager.tick, self._refresh_window, self._refresh_progress, self._refresh_tray):
             try:
                 step()
             except Exception:  # noqa: BLE001
                 traceback.print_exc()
         return True
+
+    def _refresh_tray(self):
+        self._tray_tick += 1
+        if not self.tray or self._tray_tick % 4:
+            return
+        active = [i for i in self.manager.items if i.status == DOWNLOADING]
+        waiting = sum(1 for i in self.manager.items if i.status == QUEUED)
+        tip = "Tondar"
+        if active:
+            done = sum(max(i.done, 0) for i in active)
+            total = sum(i.size for i in active if i.size > 0)
+            tip += f" — {len(active)} downloading" + (f" · {min(100, done * 100 // total)}%" if total else "")
+        if waiting:
+            tip += f"{' ·' if active else ' —'} {waiting} waiting"
+        self.tray.set_tooltip(tip)
 
     def _refresh_window(self):
         if self.window and self.window.get_visible():
@@ -339,7 +365,8 @@ class App(Adw.Application):
 
     def notify_background(self):
         self._notify("background", "Tondar is still running",
-                     "Downloads continue in the background. Open Tondar again to see them.")
+                     "Downloads continue in the background. Click the Tondar icon in the notification area "
+                     "(or open Tondar again) to see them.")
 
     def _find(self, item_id):
         return next((i for i in self.manager.items if i.id == item_id), None)
@@ -374,6 +401,9 @@ class App(Adw.Application):
         about.present(self.present_main())
 
     def quit_app(self):
+        if self.tray:
+            self.tray.remove()
+            self.tray = None
         self.manager.shutdown()
         self.quit()
 
