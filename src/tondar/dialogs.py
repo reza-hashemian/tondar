@@ -499,6 +499,9 @@ class AddWindow(Adw.Window):
                 parts.append(info["uploader"])
             if self._guest:
                 parts.append("found without logging in")
+            if self._cookie_mode:
+                parts.append("signed in with " + (self.manager.settings.get("cookies_browser", "").capitalize()
+                                                  if self._cookie_mode == "browser" else "your browser's sign-in"))
             self.info_row.set_subtitle("  ·  ".join(p for p in parts if p) or "Ready")
             if not self._name_edited and info.get("title"):
                 self._set_name(sanitize_filename(info["title"]))
@@ -1087,16 +1090,17 @@ class PreferencesDialog(Adw.PreferencesDialog):
         ffmpeg = Adw.ActionRow(title="ffmpeg", subtitle="Installed" if ffmpeg_available()
                                else "Not installed — needed for HD YouTube. Run: sudo apt install ffmpeg")
         g.add(ffmpeg)
-        names = ["Don't use"] + [b.capitalize() for b in BROWSERS]
+        browsers = [b for b in BROWSERS if b != "safari" or MACOS]
+        names = ["Don't use"] + [b.capitalize() for b in browsers]
         signin = Adw.ComboRow(
             title="Sign-in from browser",
             subtitle="When YouTube asks to confirm you're not a bot, use your sign-in from this browser. "
                      "Close Chrome / Edge first — they lock it while open.",
             model=Gtk.StringList.new(names))
         current = self.app.manager.settings.get("cookies_browser", "")
-        signin.set_selected(BROWSERS.index(current) + 1 if current in BROWSERS else 0)
+        signin.set_selected(browsers.index(current) + 1 if current in browsers else 0)
         signin.connect("notify::selected", lambda r, _p: self._set(
-            "cookies_browser", BROWSERS[r.get_selected() - 1] if r.get_selected() else ""))
+            "cookies_browser", browsers[r.get_selected() - 1] if r.get_selected() else ""))
         g.add(signin)
         page.add(g)
         self.add(page)
