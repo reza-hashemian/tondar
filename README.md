@@ -431,3 +431,10 @@ windows/         PyInstaller spec, Inno Setup script, native messaging manifests
 macos/           PyInstaller spec for Tondar.app
 tools/           build scripts
 ```
+
+## Contributors
+
+- [Reza Hashemian](https://github.com/reza-hashemian) — author
+- [Mohammad Fakhari (@Nahur1)](https://github.com/Nahur1) — Tondar 1.4.0: tray icon, progress and
+  Download Complete windows, clip downloads and format choice, Clone Website, Download with Tondar in
+  the right-click menu, the YouTube bot-check fallbacks and the Open / Open Folder crash fix
