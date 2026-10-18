@@ -106,6 +106,9 @@ class HttpTask:
         self._lock = threading.Lock()
         self._active = set()
         self._error = None
+        # Set by the Manager: decide the folder / a free file name once the server named the file.
+        self.resolve_folder = None
+        self.claim_name = None
 
     def start(self):
         threading.Thread(target=self._run, daemon=True, name=f"dl-{self.item.id[:8]}").start()
@@ -124,14 +127,19 @@ class HttpTask:
     def _main(self):
         it = self.item
         self.opener = build_opener(it, self.proxy)
-        os.makedirs(it.folder, exist_ok=True)
 
         if not it.filename or it.size < 0 or not it.segments or not os.path.exists(it.path + ".part"):
             size, ranges, name, _ = probe(it, self.opener)
             it.size, it.resumable = size, ranges and size > 0
             it.segments = []
             if not it.filename:
-                it.filename = unique_path(it.folder, name or "download")
+                name = name or "download"
+                if self.resolve_folder:
+                    # Sorted into sub-folders by the real name, not by a guess from the link: every
+                    # episode of a series ends up in the same folder.
+                    it.folder = self.resolve_folder(it, name)
+                it.filename = self.claim_name(it, it.folder, name) if self.claim_name else unique_path(it.folder, name)
+        os.makedirs(it.folder, exist_ok=True)
         part = it.path + ".part"
 
         if it.resumable:
@@ -164,7 +172,7 @@ class HttpTask:
         if os.path.exists(final):
             it.filename = unique_path(it.folder, it.filename)
             final = it.path
-        os.replace(part, final)
+        _replace(part, final)
         it.segments = []
 
     # --- non-resumable servers -------------------------------------------------
@@ -264,6 +272,18 @@ class HttpTask:
                 if attempts > MAX_RETRIES:
                     raise
                 self.stopped.wait(min(30, 2 * attempts))
+
+
+def _replace(src, dst):
+    for attempt in range(20):
+        try:
+            os.replace(src, dst)
+            return
+        except PermissionError:
+            # Windows: an antivirus scanner briefly holds the finished .part file open.
+            if attempt == 19:
+                raise
+            time.sleep(0.25)
 
 
 def _pwrite_all(f, data, pos):

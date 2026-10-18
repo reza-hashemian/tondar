@@ -8,6 +8,8 @@ const MEDIA_SITES = /(^|\.)(youtube\.com|youtu\.be|vimeo\.com|dailymotion\.com|a
 const media = new Map(); // tabId -> [{url, kind, label, size, type, time}]
 let settings = { capture: true };
 let hostOk = null; // null = unknown
+let lastPing = 0;
+const PING_AGAIN_MS = 15000; // "not reachable" is re-checked: Tondar may have been started since
 const bypass = new Set(); // urls we re-download in the browser on purpose
 
 const ready = (async () => {
@@ -22,6 +24,7 @@ const ready = (async () => {
 // ---------------------------------------------------------------------------
 // Native messaging
 async function ping() {
+  lastPing = Date.now();
   try {
     const r = await chrome.runtime.sendNativeMessage(HOST, { cmd: "ping" });
     hostOk = !!(r && r.ok);
@@ -56,6 +59,9 @@ async function sendToApp(req) {
     title: req.title || "",
     page_url: req.pageUrl || "",
     size: req.size || -1,
+    ...(req.clip && typeof req.clip === "object" ? { clip: { start: Number(req.clip.start) || 0, end: req.clip.end == null ? -1 : Number(req.clip.end) } } : {}),
+    ...(req.container ? { container: String(req.container) } : {}),
+    ...(req.audio ? { audio: true } : {}),
     user_agent: navigator.userAgent,
     cookies: await cookiesFor(req.url, req.kind === "media" ? req.pageUrl : null),
   };
@@ -71,6 +77,11 @@ async function sendToApp(req) {
   return true;
 }
 
+async function hostReachable() {
+  if (hostOk === null || (!hostOk && Date.now() - lastPing > PING_AGAIN_MS)) await ping();
+  return hostOk;
+}
+
 // ---------------------------------------------------------------------------
 // Taking over browser downloads
 chrome.downloads.onCreated.addListener(async (d) => {
@@ -78,8 +89,7 @@ chrome.downloads.onCreated.addListener(async (d) => {
   const url = d.finalUrl || d.url;
   if (!settings.capture || !/^https?:/i.test(url) || d.state !== "in_progress") return;
   if (bypass.has(url)) { bypass.delete(url); return; }
-  if (hostOk === null) await ping();
-  if (!hostOk) return;
+  if (!(await hostReachable())) return;
 
   try {
     await chrome.downloads.cancel(d.id);
@@ -127,14 +137,17 @@ function classify(details) {
   return { kind: "http", label: `${kind} (${type.split("/")[1] || "file"})`, type, size };
 }
 
-let saveTimer = null;
+// One timer per tab: with a single shared timer, videos found in one tab were never saved
+// when another tab found something within 300 ms (and were lost when the worker went to sleep).
+const saveTimers = new Map();
 function persist(tabId) {
-  clearTimeout(saveTimer);
-  saveTimer = setTimeout(() => {
+  clearTimeout(saveTimers.get(tabId));
+  saveTimers.set(tabId, setTimeout(() => {
+    saveTimers.delete(tabId);
     const list = media.get(tabId);
     const key = "tab_" + tabId;
     (list && list.length ? chrome.storage.session.set({ [key]: list }) : chrome.storage.session.remove(key)).catch(() => {});
-  }, 300);
+  }, 300));
 }
 
 function updateBadge(tabId) {
@@ -198,7 +211,25 @@ function shortUrl(url) {
   } catch (e) { return url; }
 }
 
-async function optionsFor(tabId, frameUrl, videoSrc, postUrl) {
+function foundOption(f, pageUrl, title) {
+  let path = "";
+  try { path = new URL(f.url).pathname.toLowerCase(); } catch (e) { return null; }
+  const ext = (/\.([a-z0-9]{2,5})$/.exec(path) || [])[1] || "";
+  const stream = ext === "m3u8" ? "HLS stream" : ext === "mpd" ? "DASH stream" : "";
+  const audio = /^(mp3|m4a|aac|ogg|opus|flac|wav)$/.test(ext);
+  return {
+    label: (stream || `${audio ? "Audio" : "Video"} (${ext || "file"})`) + " · no login needed",
+    sub: `Found on page (${f.how}) · ` + shortUrl(f.url),
+    req: { url: f.url, kind: stream ? "media" : "http", referer: pageUrl, pageUrl, title },
+  };
+}
+
+async function scanTab(tabId) {
+  const r = await chrome.tabs.sendMessage(tabId, { type: "scan" }, { frameId: 0 }).catch(() => null);
+  return (r && Array.isArray(r.found)) ? r.found : [];
+}
+
+async function optionsFor(tabId, frameUrl, videoSrc, postUrl, found) {
   await ready;
   const tab = await chrome.tabs.get(tabId).catch(() => null);
   const tabUrl = tab ? tab.url : frameUrl;
@@ -223,6 +254,15 @@ async function optionsFor(tabId, frameUrl, videoSrc, postUrl) {
       req: { url: m.url, kind: m.kind, referer: pageUrl, pageUrl, title },
     });
   }
+  // Links found in the page itself: they work on sites that want a login before yt-dlp
+  // may look at the video, because the page shows them to any visitor.
+  const known = new Set(opts.map((o) => o.req.url.split("#")[0]));
+  if (videoSrc) known.add(videoSrc);
+  for (const f of found || []) {
+    if (!f || !/^https?:/i.test(f.url || "") || known.has(f.url)) continue;
+    const opt = foundOption(f, pageUrl, title);
+    if (opt) { opts.push(opt); known.add(f.url); }
+  }
   const pageOpt = {
     label: "Best quality (yt-dlp)",
     sub: "Detect video on this page · " + shortUrl(pageUrl),
@@ -241,14 +281,17 @@ async function optionsFor(tabId, frameUrl, videoSrc, postUrl) {
       req: { url: frameUrl, kind: "media", referer: pageUrl, pageUrl: frameUrl, title },
     });
   }
-  return { options: opts, hostOk: hostOk === null ? await ping() : hostOk };
+  return { options: opts, hostOk: await hostReachable() };
 }
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   (async () => {
+    if (msg.type === "menuTarget") return { ok: true };
     if (msg.type === "options") {
       const tabId = msg.tabId ?? sender.tab?.id;
-      return optionsFor(tabId, msg.frameUrl || sender.url, msg.src, msg.postUrl);
+      // The popup has no page of its own: ask the tab's content script what the page shows.
+      const found = Array.isArray(msg.found) ? msg.found : (msg.tabId != null ? await scanTab(tabId) : []);
+      return optionsFor(tabId, msg.frameUrl || sender.url, msg.src, msg.postUrl, found);
     }
     if (msg.type === "download") {
       try {
@@ -278,13 +321,38 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
 // ---------------------------------------------------------------------------
 // Right-click menu
-chrome.runtime.onInstalled.addListener(() => {
+const PAGE_TITLE = "Download video on this page with Tondar";
+// One entry per context keeps "Download with Tondar" at the top level of the menu on links
+// (browsers fold two or more entries into a "Tondar" submenu).
+function createMenus() {
   chrome.contextMenus.removeAll(() => {
-    chrome.contextMenus.create({ id: "link", title: "Download link with Tondar", contexts: ["link"] });
-    chrome.contextMenus.create({ id: "media", title: "Download this media with Tondar", contexts: ["video", "audio"] });
-    chrome.contextMenus.create({ id: "page", title: "Download video on this page with Tondar", contexts: ["page", "frame"] });
+    chrome.contextMenus.create({ id: "link", title: "Download with Tondar", contexts: ["link"] });
+    chrome.contextMenus.create({ id: "media", title: "Download with Tondar", contexts: ["video", "audio", "image"] });
+    chrome.contextMenus.create({ id: "page", title: PAGE_TITLE, contexts: ["page", "frame"] });
+    chrome.contextMenus.create({ id: "clone", title: "Clone this website with Tondar", contexts: ["page"] });
   });
+}
+chrome.runtime.onInstalled.addListener(createMenus);
+chrome.runtime.onStartup.addListener(createMenus);
+
+// The content script tells us what is under the mouse before the menu opens: a download
+// button that isn't a link gets "Download with Tondar" instead of the page entry.
+let pageTitle = PAGE_TITLE;
+chrome.runtime.onMessage.addListener((msg) => {
+  if (msg && msg.type === "menuTarget") {
+    const title = msg.found ? "Download with Tondar" : PAGE_TITLE;
+    if (title !== pageTitle) {
+      pageTitle = title;
+      chrome.contextMenus.update("page", { title }, () => void chrome.runtime.lastError);
+    }
+  }
+  return false;
 });
+
+function tell(tab, frameId, text, ok) {
+  if (!tab || tab.id < 0) return;
+  chrome.tabs.sendMessage(tab.id, { type: "toast", text, ok }, { frameId: frameId || 0 }).catch(() => {});
+}
 
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   const pageUrl = info.pageUrl || (tab && tab.url) || "";
@@ -292,19 +360,28 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   let req;
   if (info.menuItemId === "link") req = { url: info.linkUrl, kind: "http", referer: pageUrl, pageUrl };
   else if (info.menuItemId === "media" && /^https?:/i.test(info.srcUrl || "")) req = { url: info.srcUrl, kind: "http", referer: pageUrl, pageUrl, title };
+  else if (info.menuItemId === "clone") req = { url: pageUrl, kind: "site", title };
   else {
-    // In a feed the page isn't the video: ask the content script which post was clicked.
-    let postUrl = "";
-    if (tab && !info.frameId) {
-      const r = await chrome.tabs.sendMessage(tab.id, { type: "postUrl" }, { frameId: 0 }).catch(() => null);
-      if (r && /^https:/i.test(r.postUrl || "")) postUrl = r.postUrl;
+    // In a feed the page isn't the video: ask the content script which post (or download button) was clicked.
+    let postUrl = "", target = null;
+    if (tab) {
+      const r = await chrome.tabs.sendMessage(tab.id, { type: "postUrl" }, { frameId: info.frameId || 0 }).catch(() => null);
+      if (r && r.target && /^https?:/i.test(r.target.url || "")) target = r.target;
+      if (!info.frameId && r && /^https:/i.test(r.postUrl || "")) postUrl = r.postUrl;
     }
-    if (postUrl) req = { url: postUrl, kind: "media", referer: postUrl, pageUrl: postUrl, title: "" };
+    if (target) req = { url: target.url, kind: "http", referer: info.frameUrl || pageUrl, pageUrl };
+    else if (postUrl) req = { url: postUrl, kind: "media", referer: postUrl, pageUrl: postUrl, title: "" };
     else req = { url: info.frameUrl || pageUrl, kind: "media", referer: pageUrl, pageUrl, title };
+  }
+  if (!req.url || !/^https?:/i.test(req.url)) {
+    tell(tab, info.frameId, "Tondar can only download http and https links", false);
+    return;
   }
   try {
     await sendToApp(req);
+    tell(tab, info.frameId, req.kind === "site" ? "Sent to Tondar: choose how to clone the site" : "Sent to Tondar", true);
   } catch (e) {
     console.warn("Tondar:", e.message);
+    tell(tab, info.frameId, e.message, false);
   }
 });

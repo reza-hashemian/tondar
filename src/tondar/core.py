@@ -5,9 +5,13 @@ import datetime
 import json
 import locale
 import os
+import shutil
+import threading
 import time
+import traceback
 import uuid
 
+from .clone import SiteTask
 from .http_task import HttpTask, RateLimiter
 from .media import MediaTask
 from .net import proxy_url
@@ -27,6 +31,12 @@ DEFAULT_SETTINGS = {
     "autostart": False,
     "confirm_browser": True,
     "notify": True,
+    # A window that follows a download started by hand, and one that says it's finished.
+    "progress_window": True,
+    "complete_window": True,
+    # New downloads go to the folder that was last picked by hand in the New Download window.
+    "remember_folder": True,
+    "last_folder": "",
     # Proxy: "system" (GNOME / environment), "none", or "manual"
     "proxy_mode": "system",
     "proxy_type": "http",  # "http" or "socks5"
@@ -42,6 +52,9 @@ DEFAULT_SETTINGS = {
     "schedule_all": False,  # also start every unfinished download, not only scheduled ones
     "schedule_done_action": "nothing",  # "nothing", "quit", "shutdown"
     "schedule_last": "",  # date of the last session that was started
+    # yt-dlp may read the YouTube sign-in from this browser when YouTube asks to prove you're not a bot
+    # ("" = never).
+    "cookies_browser": "",
 }
 
 
@@ -49,13 +62,17 @@ class Item:
     FIELDS = (
         "id", "url", "kind", "filename", "folder", "size", "done", "status", "error", "created",
         "finished", "segments", "resumable", "referer", "user_agent", "cookies", "max_segments",
-        "media_format", "title", "page_url", "scheduled",
+        "media_format", "title", "page_url", "scheduled", "auto_folder", "guest",
+        "container", "clip_start", "clip_end", "popup", "cookie_mode",
+        "clone_depth", "clone_max_pages", "clone_external", "clone_files", "clone_max_mb", "clone_robots",
+        "clone_scope", "clone_update",
+        "site_entry", "files_done", "files_total", "files_failed",
     )
 
     def __init__(self, **kw):
         self.id = uuid.uuid4().hex
         self.url = ""
-        self.kind = "http"  # "http" or "media" (yt-dlp)
+        self.kind = "http"  # "http", "media" (yt-dlp) or "site" (a whole website, clone.py)
         self.filename = ""
         self.folder = ""
         self.size = -1
@@ -74,6 +91,35 @@ class Item:
         self.title = ""
         self.page_url = ""
         self.scheduled = False
+        # The folder came from "Sort into sub-folders" (not picked by hand): it may be corrected
+        # once the real file name is known.
+        self.auto_folder = False
+        # Look the video up like a visitor who isn't logged in (yt-dlp's generic extractor).
+        self.guest = False
+        # Videos: the file type to save ("" = whatever the site has, "mp4", "mkv", "webm", "m4a"…)
+        # and, for a clip, the part to download in seconds (-1 = from the start / to the end).
+        self.container = ""
+        self.clip_start = -1.0
+        self.clip_end = -1.0
+        # Show the progress window and the "Download complete" window for this download.
+        self.popup = False
+        # Which sign-in got past a bot check when the link was checked ("", "page" or "browser").
+        self.cookie_mode = ""
+        # Website clones: how far to follow links (-1 = the whole site) and what to save with the pages.
+        self.clone_depth = -1
+        self.clone_max_pages = 1000
+        self.clone_external = True
+        self.clone_files = True
+        self.clone_max_mb = 200
+        self.clone_robots = True
+        # Which pages to follow: "site" (this website only), "subdomains" (also blog.…, shop.…) or "all".
+        self.clone_scope = "site"
+        # Clone into a folder that has an earlier copy of the site: only what changed is downloaded.
+        self.clone_update = False
+        self.site_entry = ""  # the start page inside the clone's folder
+        self.files_done = 0
+        self.files_total = 0
+        self.files_failed = 0
         for k, v in kw.items():
             if k in self.FIELDS:
                 setattr(self, k, v)
@@ -87,16 +133,33 @@ class Item:
 
     @property
     def display_name(self):
+        if self.kind == "site":
+            return self.title or self.filename or self.url
         return self.filename or self.title or self.url
 
     @property
+    def is_clip(self):
+        return self.clip_start >= 0 or self.clip_end >= 0
+
+    @property
+    def open_path(self):
+        """What "Open" opens: the file, or a cloned website's start page."""
+        if self.kind == "site" and self.site_entry:
+            return os.path.join(self.path, *self.site_entry.split("/"))
+        return self.path
+
+    @property
     def category(self):
+        if self.kind == "site":
+            return "Websites"
         if self.kind == "media" and not self.filename:
             return "Music" if (self.media_format or "").startswith("ba") else "Video"
         return category_for(self.filename or self.url)
 
     @property
     def progress(self):
+        if self.kind == "site":
+            return self.files_done / self.files_total if self.files_total > 0 else 0.0
         return self.done / self.size if self.size > 0 else 0.0
 
     def to_dict(self):
@@ -123,6 +186,7 @@ class Manager:
         self._last_sched_check = 0
         self._dirty = False
         self._last_save = 0
+        self._paths_lock = threading.Lock()  # download threads pick file names at the same time
         self.settings = dict(DEFAULT_SETTINGS)
         self._load()
         self.apply_settings()
@@ -161,6 +225,8 @@ class Manager:
 
     def apply_settings(self):
         self.limiter.rate = int(self.settings["speed_limit_kb"]) * 1024
+        from . import media
+        media.configure(self.settings)
 
     def changed(self):
         self._dirty = True
@@ -172,16 +238,68 @@ class Manager:
             return base
         if kind == "media":
             return os.path.join(base, "Music" if audio else "Video")
+        if kind == "site":
+            return os.path.join(base, "Websites")
         return os.path.join(base, category_for(filename or ""))
+
+    def remembered_folder(self):
+        """The folder last picked by hand, if that's turned on and it still exists."""
+        folder = self.settings.get("last_folder") or ""
+        if self.settings.get("remember_folder", True) and folder and os.path.isdir(folder):
+            return folder
+        return None
+
+    def remember_folder(self, folder):
+        """Store (or with None forget) the folder picked by hand for the next downloads."""
+        value = folder or ""
+        if self.settings.get("last_folder", "") != value:
+            self.settings["last_folder"] = value
+            self.save_settings()
+
+    def pick_folder(self, filename, kind="http", audio=False):
+        """(folder, auto) for a new download: the remembered folder, or the sorted default one."""
+        folder = self.remembered_folder()
+        if folder:
+            return folder, False
+        return self.folder_for(filename, kind, audio), True
 
     def taken_paths(self):
         return {i.path for i in self.items if i.filename and i.status != COMPLETED}
 
+    def claim_name(self, item, folder, name):
+        """Pick a free file name in `folder` for `item` (called from download threads)."""
+        with self._paths_lock:
+            taken = {i.path for i in list(self.items) if i is not item and i.filename and i.status != COMPLETED}
+            return unique_path(folder, name, taken)
+
+    def duplicate_of(self, item):
+        """An unfinished download of the same link (and quality), e.g. from a double click."""
+        for other in self.items:
+            if (other.url == item.url and other.kind == item.kind and other.status != COMPLETED
+                    and (item.kind != "media" or other.media_format == item.media_format)
+                    and (item.kind != "media" or other.title == item.title)
+                    and (other.container, other.clip_start, other.clip_end) == (item.container, item.clip_start, item.clip_end)
+                    and (item.kind != "site" or other.folder == item.folder)):
+                return other
+        return None
+
     def add(self, item, start=True):
+        dup = self.duplicate_of(item)
+        if dup:
+            # Don't download the same thing twice: one copy would sit in the queue showing
+            # "Waiting in queue" next to a file that is already there.
+            if start and dup.status in (PAUSED, ERROR):
+                self.start(dup)
+            return dup
         if item.scheduled and self._session:
             start = True  # the scheduled time window is open right now
             self._session_ids.add(item.id)
-        if item.filename:
+        if item.filename and item.kind == "site" and item.clone_update:
+            for old in [i for i in self.items if i.kind == "site" and i.path == item.path and i.status in (COMPLETED, PAUSED, ERROR)]:
+                self.remove(old, save=False)  # the new clone updates the same folder
+        elif item.filename and item.kind == "site":
+            item.filename = self._free_folder_name(item.folder, item.filename)
+        elif item.filename:
             item.filename = unique_path(item.folder, item.filename, self.taken_paths())
         item.status = QUEUED if start else PAUSED
         self.items.append(item)
@@ -191,11 +309,23 @@ class Manager:
         self.schedule()
         return item
 
-    def remove(self, item, delete_file=False):
+    def _free_folder_name(self, folder, name):
+        """A folder name for a website clone that no other clone (or file) uses yet."""
+        taken = {i.path for i in self.items if i.kind == "site"}
+        candidate, n = name, 2
+        while os.path.exists(os.path.join(folder, candidate)) or os.path.join(folder, candidate) in taken:
+            candidate = f"{name} ({n})"
+            n += 1
+        return candidate
+
+    def remove(self, item, delete_file=False, save=True):
         self._stop_task(item)
         if item in self.items:
             self.items.remove(item)
-        if item.filename:
+        if item.kind == "site":
+            if delete_file and item.filename and os.path.isdir(item.path):
+                shutil.rmtree(item.path, ignore_errors=True)
+        elif item.filename:
             paths = [item.path + ".part"]
             if delete_file:
                 paths.append(item.path)
@@ -206,6 +336,14 @@ class Manager:
                     pass
         for cb in self.on_removed:
             cb(item)
+        if save:
+            self.save()
+        else:
+            self.changed()
+
+    def remove_many(self, items, delete_files=False):
+        for item in list(items):
+            self.remove(item, delete_files, save=False)
         self.save()
 
     def start(self, item):
@@ -213,7 +351,9 @@ class Manager:
             return
         if item.status == COMPLETED:
             item.done, item.segments, item.size = 0, [], -1
-            if item.filename and os.path.exists(item.path):
+            if item.kind == "site":
+                item.files_done = item.files_total = item.files_failed = 0  # cloned again into its folder
+            elif item.filename and os.path.exists(item.path):
                 item.filename = unique_path(item.folder, item.filename, self.taken_paths())
         item.status, item.error = QUEUED, ""
         self.changed()
@@ -259,14 +399,33 @@ class Manager:
     def _launch(self, item):
         item.status = DOWNLOADING
         item._samples.clear()
-        cls = MediaTask if item.kind == "media" else HttpTask
-        task = cls(item, self.limiter, lambda t, err: self.post(self._task_done, t, err), self.proxy_for(item.url))
+        cls = {"media": MediaTask, "site": SiteTask}.get(item.kind, HttpTask)
+        try:
+            task = cls(item, self.limiter, lambda t, err: self.post(self._task_done, t, err), self.proxy_for(item.url))
+        except Exception as e:  # noqa: BLE001 - must not stop the rest of the queue
+            item.status, item.error = ERROR, str(e) or e.__class__.__name__
+            return
+        task.resolve_folder = self._resolve_folder
+        task.claim_name = self.claim_name
         self.tasks[item.id] = task
-        task.start()
+        try:
+            task.start()
+        except Exception as e:  # noqa: BLE001 - e.g. no more threads
+            self.tasks.pop(item.id, None)
+            item.status, item.error = ERROR, str(e) or e.__class__.__name__
+
+    def _resolve_folder(self, item, filename):
+        """Folder for a download whose file name only became known when it started."""
+        if not item.auto_folder:
+            return item.folder
+        return self.folder_for(filename, item.kind, (item.media_format or "").startswith("ba"))
 
     def _task_done(self, task, error):
         item = task.item
-        self.tasks.pop(item.id, None)
+        if self.tasks.get(item.id) is task:
+            self.tasks.pop(item.id, None)
+        elif item.id in self.tasks:
+            return False  # an old task of a download that has been started again since
         item.speed, item.eta = 0, None
         if task.stopped.is_set() and item.status != DOWNLOADING:
             # Paused (or removed) by the user.
@@ -275,17 +434,41 @@ class Manager:
         elif error:
             item.status, item.error = ERROR, error
         else:
-            item.status, item.finished = COMPLETED, time.time()
+            item.status, item.finished, item.error = COMPLETED, time.time(), ""
             item.segments = []
+            if item.size < 0 or item.done > item.size:
+                item.size = item.done
             for cb in self.on_finished:
-                cb(item)
-        self.save()
+                try:
+                    cb(item)
+                except Exception:  # noqa: BLE001 - e.g. notifications unavailable
+                    traceback.print_exc()
+        try:
+            self.save()
+        except OSError:
+            self._dirty = True  # try again on the next tick
+            traceback.print_exc()
         self.schedule()
         return False
+
+    def _reconcile(self):
+        """Repair states that disagree with the running tasks, so no row stays stuck
+        on "Waiting in queue" or "Downloading" for a download that has ended."""
+        for item in self.items:
+            task = self.tasks.get(item.id)
+            if task and item.status == QUEUED:
+                item.status = DOWNLOADING
+            elif not task and item.status == DOWNLOADING:
+                item.status = QUEUED  # its task is gone: run it again
+            elif not task and item.status == PAUSING:
+                item.status = PAUSED
+        for item_id in [i for i, t in self.tasks.items() if t.item not in self.items]:
+            self.tasks.pop(item_id).stop()  # removed from the list while running
 
     def tick(self):
         """Called every half second on the UI thread."""
         now = time.monotonic()
+        self._reconcile()
         for item in self.items:
             if item.status != DOWNLOADING:
                 continue
@@ -296,7 +479,11 @@ class Manager:
                 item.eta = (item.size - item.done) / item.speed if item.speed > 0 and item.size > 0 else None
             self._dirty = True
         if self._dirty and now - self._last_save > 3:
-            self.save()
+            try:
+                self.save()
+            except OSError:
+                self._last_save = now
+                traceback.print_exc()
         if now - self._last_sched_check > 5:
             self._last_sched_check = now
             self.run_scheduler()

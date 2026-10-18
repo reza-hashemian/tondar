@@ -1,6 +1,9 @@
 import os
+import shutil
 import subprocess
+import threading
 import time
+import traceback
 
 from gi.repository import Adw, Gdk, Gio, GLib, Gtk
 
@@ -19,6 +22,7 @@ FILTERS = [
     ("Compressed", "Compressed", "package-x-generic-symbolic"),
     ("Documents", "Documents", "x-office-document-symbolic"),
     ("Programs", "Programs", "application-x-executable-symbolic"),
+    ("Websites", "Websites", "web-browser-symbolic"),
     ("Other", "Other", "text-x-generic-symbolic"),
 ]
 
@@ -28,6 +32,7 @@ ROW_MENU = """
     <section>
       <item><attribute name="label">Open</attribute><attribute name="action">row.open</attribute></item>
       <item><attribute name="label">Open Folder</attribute><attribute name="action">row.open-folder</attribute></item>
+      <item><attribute name="label">Progress Window</attribute><attribute name="action">row.progress</attribute></item>
     </section>
     <section>
       <item><attribute name="label">Copy Address</attribute><attribute name="action">row.copy-url</attribute></item>
@@ -116,20 +121,92 @@ def _win32_foreground(title):
     return True
 
 
+# Opening files and folders never involves a window. Gtk.FileLauncher with a parent window
+# crashed Tondar (segmentation fault) when that window closed while the launch was still
+# running, which is exactly what "Download Complete → Open / Open Folder" does; on Windows
+# it could also freeze the app while the program started. `parent` is kept for callers.
+def _quiet_popen(cmd, **kw):
+    try:
+        subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                         close_fds=True, **kw)
+        return True
+    except OSError:
+        traceback.print_exc()
+        return False
+
+
+def _win_start(path, verb=None):
+    """ShellExecute in a thread of its own: starting an installer (UAC prompt) or a slow
+    program must not stop the window from drawing."""
+    def run():
+        try:
+            import ctypes
+
+            ctypes.windll.ole32.CoInitializeEx(None, 0x2 | 0x4)  # apartment threaded, no OLE1 DDE
+            if verb:
+                os.startfile(path, verb)
+            else:
+                os.startfile(path)
+        except OSError:
+            traceback.print_exc()
+
+    threading.Thread(target=run, daemon=True).start()
+
+
+def _gio_open(path):
+    uri = Gio.File.new_for_path(path).get_uri()
+
+    def done(_src, res):
+        try:
+            Gio.AppInfo.launch_default_for_uri_finish(res)
+        except GLib.Error as e:
+            print("Tondar: can't open", path, "-", e.message)
+
+    Gio.AppInfo.launch_default_for_uri_async(uri, None, None, done)
+
+
 def open_uri(path, parent=None):
+    """Open a file (or folder, or web page file) with its default program."""
     if MACOS:
-        subprocess.Popen(["open", path])
-        return
-    launcher = Gtk.FileLauncher.new(Gio.File.new_for_path(path))
-    launcher.launch(parent, None, None)
+        _quiet_popen(["open", path])
+    elif WINDOWS:
+        _win_start(os.path.normpath(path))
+    elif shutil.which("xdg-open"):
+        _quiet_popen(["xdg-open", path], start_new_session=True)
+    else:
+        _gio_open(path)
 
 
 def show_in_folder(path, parent=None):
     """Open the folder with `path` selected."""
     if MACOS:  # GTK asks a D-Bus file manager, which macOS doesn't have
-        subprocess.Popen(["open", "-R", path])
+        _quiet_popen(["open", "-R", path])
+    elif WINDOWS:
+        # explorer wants exactly: /select,"C:\path\file" (one argument, quoted path)
+        if not _quiet_popen('explorer /select,"%s"' % os.path.normpath(path)):
+            open_uri(os.path.dirname(path))
     else:
-        Gtk.FileLauncher.new(Gio.File.new_for_path(path)).open_containing_folder(parent, None, None)
+        _linux_show_item(path)
+
+
+def _linux_show_item(path):
+    """org.freedesktop.FileManager1.ShowItems (Files, Dolphin, Nemo, Thunar…), else open the folder."""
+    folder = os.path.dirname(path)
+    app = Gio.Application.get_default()
+    bus = app.get_dbus_connection() if app else None
+    if bus is None:
+        open_uri(folder)
+        return
+
+    def done(conn, res):
+        try:
+            conn.call_finish(res)
+        except GLib.Error:
+            open_uri(folder)  # no file manager on D-Bus
+
+    bus.call("org.freedesktop.FileManager1", "/org/freedesktop/FileManager1", "org.freedesktop.FileManager1",
+             "ShowItems", GLib.Variant("(ass)", ([Gio.File.new_for_path(path).get_uri()], "")), None,
+             Gio.DBusCallFlags.NONE, 5000, None, done)
 
 
 def open_folder(path, parent=None):
@@ -188,6 +265,7 @@ class DownloadRow(Gtk.ListBoxRow):
         group = Gio.SimpleActionGroup()
         for name, cb in [
             ("open", self._open), ("open-folder", self._open_folder), ("copy-url", self._copy_url),
+            ("progress", lambda: self.win.app.show_progress(item, force=True)),
             ("change-url", self._change_url), ("restart", self._restart),
             ("schedule", lambda: self._set_scheduled(True)), ("unschedule", lambda: self._set_scheduled(False)),
             ("remove", lambda: self.win.remove_item(item, False)),
@@ -213,7 +291,7 @@ class DownloadRow(Gtk.ListBoxRow):
         it = self.item
         sched = self.win.manager.settings
         state = (it.status, it.done, it.size, round(it.speed), it.filename, it.title, it.error, it.scheduled,
-                 sched["schedule_enabled"], sched["schedule_start"])
+                 sched["schedule_enabled"], sched["schedule_start"], it.files_done, it.files_total)
         if state == self._state:
             return
         self._state = state
@@ -226,7 +304,19 @@ class DownloadRow(Gtk.ListBoxRow):
         self.info.remove_css_class("error")
 
         size = human_size(it.size) if it.size >= 0 else "unknown size"
-        if it.status == DOWNLOADING:
+        site = it.kind == "site"
+        if site and it.status == DOWNLOADING:
+            info = f"Cloning  ·  {it.files_done} of {it.files_total} files  ·  {human_size(it.done)}"
+            if it.speed:
+                info += f"  ·  {human_size(it.speed)}/s"
+        elif site and it.status == COMPLETED:
+            when = time.strftime("%Y-%m-%d %H:%M", time.localtime(it.finished or it.created))
+            info = f"Website  ·  {it.files_done} files  ·  {human_size(it.size)}  ·  {when}"
+            if it.files_failed:
+                info += f"  ·  {it.files_failed} couldn't be saved"
+        elif site and it.status == PAUSED and it.files_done:
+            info = f"Paused  ·  {it.files_done} of {it.files_total} files"
+        elif it.status == DOWNLOADING:
             if it.size < 0 and it.done == 0:
                 info = "Connecting…"
                 self.bar.pulse()
@@ -263,6 +353,7 @@ class DownloadRow(Gtk.ListBoxRow):
         self.toggle.set_tooltip_text("Pause" if running else ("Retry" if it.status == ERROR else "Resume"))
         done = it.status == COMPLETED
         self.actions.lookup_action("open").set_enabled(done)
+        self.actions.lookup_action("progress").set_enabled(not done)
         self.actions.lookup_action("schedule").set_enabled(not done and not it.scheduled)
         self.actions.lookup_action("unschedule").set_enabled(it.scheduled)
         self.actions.lookup_action("change-url").set_enabled(not done and it.status not in (DOWNLOADING, PAUSING))
@@ -308,14 +399,16 @@ class DownloadRow(Gtk.ListBoxRow):
         dialog.present(self.win)
 
     def _open(self):
-        if self.item.status == COMPLETED and os.path.exists(self.item.path):
-            open_uri(self.item.path, self.win)
+        if self.item.status == COMPLETED and os.path.exists(self.item.open_path):
+            open_uri(self.item.open_path, self.win)
         elif self.item.status == COMPLETED:
             self.win.toast("File was moved or deleted")
 
     def _open_folder(self):
         it = self.item
-        if it.filename and os.path.exists(it.path):
+        if it.kind == "site" and os.path.isdir(it.path):
+            open_uri(it.path, self.win)
+        elif it.filename and os.path.exists(it.path):
             open_folder(it.path, self.win)
         elif it.folder and os.path.isdir(it.folder):
             open_uri(it.folder, self.win)
@@ -385,6 +478,7 @@ class MainWindow(Adw.ApplicationWindow):
         self.rows = {}
         self.filter = "all"
         self.search = ""
+        self._filter_signature = None
 
         self.split = Adw.OverlaySplitView(min_sidebar_width=200, max_sidebar_width=240)
 
@@ -423,6 +517,8 @@ class MainWindow(Adw.ApplicationWindow):
         add = Gtk.Button(icon_name="list-add-symbolic", tooltip_text="Add Download (Ctrl+N)", action_name="app.add")
         add.add_css_class("suggested-action")
         header.pack_start(add)
+        clone = Gtk.Button(icon_name="web-browser-symbolic", tooltip_text="Clone Website (Ctrl+Shift+N)", action_name="app.clone")
+        header.pack_start(clone)
         header.pack_start(Gtk.Button(icon_name="media-playback-start-symbolic", tooltip_text="Resume All", action_name="app.start-all"))
         header.pack_start(Gtk.Button(icon_name="media-playback-pause-symbolic", tooltip_text="Pause All", action_name="app.pause-all"))
 
@@ -433,6 +529,7 @@ class MainWindow(Adw.ApplicationWindow):
         menu = Gio.Menu()
         s1 = Gio.Menu()
         s1.append("Add Download…", "app.add")
+        s1.append("Clone Website…", "app.clone")
         s1.append("Remove Completed", "app.clear-completed")
         s2 = Gio.Menu()
         s2.append("Preferences", "app.preferences")
@@ -547,11 +644,20 @@ class MainWindow(Adw.ApplicationWindow):
         self._refresh_empty()
 
     def refresh(self):
-        for row in self.rows.values():
-            row.update()
+        for row in list(self.rows.values()):
+            try:
+                row.update()
+            except Exception:  # noqa: BLE001
+                # One bad row must not freeze the others (they would keep showing an old
+                # state such as "Waiting in queue" for a download that has finished).
+                traceback.print_exc()
         if self.filter in ("active", "unfinished", "completed", "scheduled"):
-            self.list.invalidate_filter()
-            self._refresh_empty()
+            # Re-filter only when a status changed, not twice a second.
+            signature = tuple((i.id, i.status, i.scheduled) for i in self.manager.items)
+            if signature != self._filter_signature:
+                self._filter_signature = signature
+                self.list.invalidate_filter()
+                self._refresh_empty()
         active = sum(1 for i in self.manager.items if i.status == DOWNLOADING)
         queued = sum(1 for i in self.manager.items if i.status == QUEUED)
         text = f"{len(self.manager.items)} downloads"
@@ -574,7 +680,11 @@ class MainWindow(Adw.ApplicationWindow):
             self.manager.remove(item, False)
             self.toast(f"Removed “{item.display_name}”")
             return
-        dialog = Adw.AlertDialog(heading="Delete File?", body=f"“{item.display_name}” will be permanently deleted from disk.")
+        if item.kind == "site":
+            dialog = Adw.AlertDialog(heading="Delete Website Copy?",
+                                     body=f"The folder “{item.filename}” and everything in it will be permanently deleted.")
+        else:
+            dialog = Adw.AlertDialog(heading="Delete File?", body=f"“{item.display_name}” will be permanently deleted from disk.")
         dialog.add_response("cancel", "Cancel")
         dialog.add_response("delete", "Delete")
         dialog.set_response_appearance("delete", Adw.ResponseAppearance.DESTRUCTIVE)

@@ -12,9 +12,11 @@ gi.require_version("Adw", "1")
 from gi.repository import Adw, Gio, GLib, Gtk  # noqa: E402
 
 from . import APP_ID, VERSION, ipc  # noqa: E402
-from .core import COMPLETED, Item, Manager  # noqa: E402
-from .dialogs import AddWindow, BrowserDialog, PreferencesDialog  # noqa: E402
-from .util import MACOS, WINDOWS, looks_like_media_page, sanitize_filename, unique_path  # noqa: E402
+from .core import COMPLETED, DOWNLOADING, QUEUED, Item, Manager  # noqa: E402
+from .dialogs import AddWindow, BrowserDialog, CloneWindow, PreferencesDialog  # noqa: E402
+from .popups import CompleteWindow, ProgressWindow  # noqa: E402
+from .media import audio_selector  # noqa: E402
+from .util import MACOS, WINDOWS, clean_page_title, looks_like_media_page, sanitize_filename, unique_path  # noqa: E402
 from .window import MainWindow, bring_to_front, open_folder, open_uri  # noqa: E402
 
 
@@ -26,12 +28,20 @@ class App(Adw.Application):
         super().__init__(application_id=APP_ID, flags=flags)
         self.manager = None
         self.window = None
+        self.tray = None
+        self.progress_windows = {}  # item id -> ProgressWindow
+        # Links from the browser wait here while a New Download window for another link is open:
+        # with one window per link they all opened on the same spot, the main window came up
+        # over the older ones, and only the last link was ever downloaded.
+        self.browser_dialog = None
+        self.pending = []
         GLib.set_application_name("Tondar")
 
     def do_startup(self):
         Adw.Application.do_startup(self)
         self.manager = Manager(lambda fn, *a: GLib.idle_add(fn, *a))
         self.manager.on_finished.append(self._on_finished)
+        self.manager.on_removed.append(self._close_progress)
         self.manager.on_schedule_started.append(self._on_schedule_started)
         self.manager.on_schedule_done.append(self._on_schedule_done)
         self._shutdown_timer = 0
@@ -46,6 +56,7 @@ class App(Adw.Application):
 
         for name, cb, accels in [
             ("add", lambda *_: self.open_add_dialog({}), ["<Primary>n"]),
+            ("clone", lambda *_: self.open_clone_dialog(""), ["<Primary><Shift>n"]),
             ("start-all", lambda *_: self.manager.start_all(), []),
             ("pause-all", lambda *_: self.manager.pause_all(), []),
             ("clear-completed", lambda *_: self._clear_completed(), []),
@@ -64,11 +75,16 @@ class App(Adw.Application):
             if accels:
                 self.set_accels_for_action(f"app.{name}", accels)
 
-        for name, cb in [("open-item", self._open_item), ("open-item-folder", self._open_item_folder)]:
+        for name, cb in [("open-item", self._open_item), ("open-item-folder", self._open_item_folder),
+                         ("show-progress", self._show_progress_action)]:
             action = Gio.SimpleAction.new(name, GLib.VariantType.new("s"))
             action.connect("activate", cb)
             self.add_action(action)
 
+        from . import tray
+
+        self.tray = tray.create(self)
+        self._tray_tick = 0
         GLib.timeout_add(500, self._tick)
 
     def do_activate(self):
@@ -96,6 +112,12 @@ class App(Adw.Application):
                 except ValueError:
                     pass
                 show = False
+            elif arg == "--new-download":  # from the launcher's right-click menu
+                GLib.idle_add(lambda: self.open_add_dialog({}) and False)
+                show = False
+            elif arg == "--clone":
+                GLib.idle_add(lambda: self.open_clone_dialog("") and False)
+                show = False
             elif "://" in arg:
                 requests.append({"url": arg})
             i += 1
@@ -112,46 +134,157 @@ class App(Adw.Application):
         self.window.present()
         return self.window
 
-    def open_add_dialog(self, request):
-        bring_to_front(AddWindow(self, request))
+    def open_add_dialog(self, request, from_browser=False):
+        if from_browser:
+            if self.browser_dialog is not None:
+                self.pending.append(request)
+                self.browser_dialog.update_pending(len(self.pending))
+                bring_to_front(self.browser_dialog)
+                return False
+            win = AddWindow(self, request)
+            self.browser_dialog = win
+            # "destroy" doesn't come while Python still holds the window: watch the closing itself.
+            win.connect("close-request", lambda w: GLib.idle_add(self._browser_dialog_closed, w) and False)
+            win.update_pending(len(self.pending))
+        else:
+            win = AddWindow(self, request)
+        bring_to_front(win)
         return False
+
+    def _browser_dialog_closed(self, win):
+        if self.browser_dialog is win and not win.get_visible():
+            self.browser_dialog = None
+            if self.pending:
+                self.open_add_dialog(self.pending.pop(0), True)
+        return False
+
+    def add_pending_now(self):
+        """"Add All": the links still waiting get the default choices."""
+        waiting, self.pending = self.pending, []
+        added = [self.quick_add(req, show=False) for req in waiting]
+        if self.browser_dialog:
+            self.browser_dialog.update_pending(0)
+        n = sum(1 for a in added if a)
+        if n and self.window and self.window.get_visible():
+            self.window.toast(f"Added {n} more download{'s' if n != 1 else ''}")
+
+    def quick_add(self, req, show=True):
+        """Add a link from the browser with the default choices (no New Download window)."""
+        m = self.manager
+        url = (req.get("url") or "").strip()
+        if not url:
+            return None
+        name = sanitize_filename(req.get("filename") or "", "")
+        media = (req.get("kind") == "media" or looks_like_media_page(url) or req.get("clip")
+                 or req.get("container") or req.get("audio"))
+        item = Item(
+            url=url, kind="media" if media else "http", referer=req.get("referer", ""),
+            user_agent=req.get("user_agent", ""), cookies=req.get("cookies", []), page_url=req.get("page_url", ""),
+            max_segments=int(m.settings["segments"]), size=int(req.get("size") or -1), popup=True,
+        )
+        clip = req.get("clip") if isinstance(req.get("clip"), dict) else None
+        if clip:
+            item.clip_start = _num(clip.get("start"), -1)
+            item.clip_end = _num(clip.get("end"), -1)
+            if item.clip_start <= 0:
+                item.clip_start = -1 if item.clip_end < 0 else 0
+        if media:
+            container = req.get("container") or ""
+            audio = bool(req.get("audio"))
+            item.media_format = audio_selector(container) if audio else "bv*+ba/b"
+            item.container = container
+            item.title = sanitize_filename(clean_page_title(req.get("title") or ""), "")
+            item.folder, item.auto_folder = m.pick_folder(item.title or url, "media", audio)
+        else:
+            item.folder, item.auto_folder = m.pick_folder(name or url)
+            if name:
+                item.filename = unique_path(item.folder, name, m.taken_paths())
+        added = m.add(item, start=True)
+        if show and added is not item and self.window and self.window.get_visible():
+            self.window.toast(f"Already in the list: “{added.display_name}”")
+        if added is item or added.status not in (COMPLETED,):
+            self.show_progress(added, force=added is not item)
+        return added
+
+    def open_clone_dialog(self, url):
+        bring_to_front(CloneWindow(self, url))
+        return False
+
+    def show_progress(self, item, force=False):
+        """The window that follows one download (also opened from the list with "Progress Window")."""
+        if not force and not self.manager.settings.get("progress_window", True):
+            return
+        win = self.progress_windows.get(item.id)
+        if win is None:
+            win = ProgressWindow(self, item)
+            self.progress_windows[item.id] = win
+            win.connect("close-request", lambda w, i=item.id: self.progress_windows.pop(i, None) and False)
+        bring_to_front(win)
+
+    def _close_progress(self, item):
+        win = self.progress_windows.pop(item.id, None)
+        if win:
+            win.close()
+
+    def _show_progress_action(self, _a, param):
+        item = self._find(param.get_string())
+        if item:
+            self.show_progress(item, force=True)
 
     def handle_request(self, req):
         """A link sent from the browser extension (or the command line)."""
         url = (req.get("url") or "").strip()
         if not url:
             return
-        media = req.get("kind") == "media" or looks_like_media_page(url)
-        if self.manager.settings["confirm_browser"] or media:  # videos always need a quality choice
-            self.open_add_dialog(req)
+        if req.get("kind") == "site":
+            self.open_clone_dialog(url)
             return
-        m = self.manager
-        name = sanitize_filename(req.get("filename") or "", "")
-        item = Item(
-            url=url, kind="http", referer=req.get("referer", ""), user_agent=req.get("user_agent", ""),
-            cookies=req.get("cookies", []), page_url=req.get("page_url", ""),
-            max_segments=int(m.settings["segments"]), size=int(req.get("size") or -1),
-        )
-        item.folder = m.folder_for(name or url)
-        if name:
-            item.filename = unique_path(item.folder, name, m.taken_paths())
-        m.add(item, start=True)
-        bring_to_front(self.present_main())  # show the new download in the list
+        media = (req.get("kind") == "media" or looks_like_media_page(url) or req.get("clip")
+                 or req.get("container") or req.get("audio"))
+        if self.manager.settings["confirm_browser"] or media:  # videos always need a quality choice
+            self.open_add_dialog(req, from_browser=True)
+            return
+        if not self.manager.settings.get("progress_window", True):
+            win = self.present_main()
+            bring_to_front(win)  # show the new download in the list
+        self.quick_add(req)
 
     # --- periodic update --------------------------------------------------------------------
     def _tick(self):
         # An exception escaping a GLib timeout removes it for good: downloads would sit in
         # "Waiting in queue" and the window would stop updating.
-        for step in (self.manager.tick, self._refresh_window):
+        for step in (self.manager.tick, self._refresh_window, self._refresh_progress, self._refresh_tray):
             try:
                 step()
             except Exception:  # noqa: BLE001
                 traceback.print_exc()
         return True
 
+    def _refresh_tray(self):
+        self._tray_tick += 1
+        if not self.tray or self._tray_tick % 4:
+            return
+        active = [i for i in self.manager.items if i.status == DOWNLOADING]
+        waiting = sum(1 for i in self.manager.items if i.status == QUEUED)
+        tip = "Tondar"
+        if active:
+            done = sum(max(i.done, 0) for i in active)
+            total = sum(i.size for i in active if i.size > 0)
+            tip += f" — {len(active)} downloading" + (f" · {min(100, done * 100 // total)}%" if total else "")
+        if waiting:
+            tip += f"{' ·' if active else ' —'} {waiting} waiting"
+        self.tray.set_tooltip(tip)
+
     def _refresh_window(self):
         if self.window and self.window.get_visible():
             self.window.refresh()
+
+    def _refresh_progress(self):
+        for win in list(self.progress_windows.values()):
+            try:
+                win.refresh()
+            except Exception:  # noqa: BLE001 - one window must not stop the others
+                traceback.print_exc()
 
     # --- notifications -------------------------------------------------------------------------
     def _notify(self, nid, title, body, item=None):
@@ -167,7 +300,12 @@ class App(Adw.Application):
         self.send_notification(nid, n)
 
     def _on_finished(self, item):
-        self._notify(f"done-{item.id}", "Download complete", item.display_name, item)
+        self._close_progress(item)
+        if item.popup and self.manager.settings.get("complete_window", True):
+            bring_to_front(CompleteWindow(self, item))
+            return
+        title = "Website saved" if item.kind == "site" else "Download complete"
+        self._notify(f"done-{item.id}", title, item.display_name, item)
 
     # --- scheduler -----------------------------------------------------------------------------
     def _on_schedule_started(self, count):
@@ -227,25 +365,27 @@ class App(Adw.Application):
 
     def notify_background(self):
         self._notify("background", "Tondar is still running",
-                     "Downloads continue in the background. Open Tondar again to see them.")
+                     "Downloads continue in the background. Click the Tondar icon in the notification area "
+                     "(or open Tondar again) to see them.")
 
     def _find(self, item_id):
         return next((i for i in self.manager.items if i.id == item_id), None)
 
     def _open_item(self, _a, param):
         item = self._find(param.get_string())
-        if item and item.status == COMPLETED and os.path.exists(item.path):
-            open_uri(item.path)
+        if item and item.status == COMPLETED and os.path.exists(item.open_path):
+            open_uri(item.open_path)
 
     def _open_item_folder(self, _a, param):
         item = self._find(param.get_string())
-        if item:
+        if item and item.kind == "site" and os.path.isdir(item.path):
+            open_uri(item.path)
+        elif item:
             open_folder(item.path if os.path.exists(item.path) else item.folder)
 
     # --- misc actions ---------------------------------------------------------------------------
     def _clear_completed(self):
-        for item in [i for i in self.manager.items if i.status == COMPLETED]:
-            self.manager.remove(item, False)
+        self.manager.remove_many([i for i in self.manager.items if i.status == COMPLETED])
 
     def _open_ytdlp(self):
         dialog = PreferencesDialog(self)
@@ -261,12 +401,22 @@ class App(Adw.Application):
         about.present(self.present_main())
 
     def quit_app(self):
+        if self.tray:
+            self.tray.remove()
+            self.tray = None
         self.manager.shutdown()
         self.quit()
 
 
 def main(argv=None):
     argv = argv if argv is not None else sys.argv
-    if (WINDOWS or MACOS) and ipc.forward(argv[1:]):
-        return 0  # an instance is already running and took over
+    if (WINDOWS or MACOS) and not ipc.acquire_instance(argv[1:]):
+        return 0  # an instance is already running (or starting) and took over
     return App().run(argv)
+
+
+def _num(v, default):
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return default
