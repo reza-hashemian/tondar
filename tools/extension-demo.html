@@ -1,0 +1,86 @@
+<!doctype html>
+<!-- A made-up video page that runs the real extension/content.js, for the README screenshot.
+     tools/screenshots.py opens it in headless Chrome. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Big Buck Bunny — VideoHub</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #0f0f12; color: #eee; font: 15px/1.4 system-ui, "Vazirmatn", sans-serif; }
+  header { display: flex; align-items: center; gap: 16px; height: 60px; padding: 0 24px; border-bottom: 1px solid #222; }
+  .logo { font-weight: 800; font-size: 20px; letter-spacing: -.02em; }
+  .logo b { color: #4dabf7; }
+  .search { flex: 1; max-width: 520px; margin: 0 auto; height: 38px; border-radius: 19px; background: #1c1c21;
+    border: 1px solid #2a2a30; padding: 0 16px; color: #777; display: flex; align-items: center; }
+  .avatar { width: 34px; height: 34px; border-radius: 50%; background: linear-gradient(135deg, #845ef7, #4dabf7); }
+  main { display: grid; grid-template-columns: 1fr 300px; gap: 24px; padding: 24px; }
+  video { width: 100%; aspect-ratio: 16 / 9; display: block; border-radius: 14px; background: #000; object-fit: cover; }
+  h1 { font-size: 20px; margin: 16px 0 6px; }
+  .meta { color: #999; font-size: 14px; }
+  .side { display: flex; flex-direction: column; gap: 14px; }
+  .card { display: grid; grid-template-columns: 130px 1fr; gap: 10px; }
+  .thumb { aspect-ratio: 16 / 9; border-radius: 8px; }
+  .card div:last-child { font-size: 13px; color: #ccc; }
+  .card small { display: block; color: #777; margin-top: 4px; }
+</style>
+</head>
+<body>
+<header>
+  <div class="logo">Video<b>Hub</b></div>
+  <div class="search">Search</div>
+  <div class="avatar"></div>
+</header>
+<main>
+  <section>
+    <video id="v" poster="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1600 900'%3E%3Cdefs%3E%3ClinearGradient id='s' x1='0' y1='0' x2='0' y2='1'%3E%3Cstop offset='0' stop-color='%23ff9a5a'/%3E%3Cstop offset='.55' stop-color='%23ffd29a'/%3E%3Cstop offset='1' stop-color='%23a5d8ff'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='1600' height='900' fill='url(%23s)'/%3E%3Ccircle cx='1120' cy='330' r='120' fill='%23fff3bf'/%3E%3Cpath d='M0 620 L260 380 L470 560 L720 300 L1010 600 L1250 420 L1600 640 V900 H0Z' fill='%235c7cfa' opacity='.55'/%3E%3Cpath d='M0 700 Q400 560 800 690 T1600 660 V900 H0Z' fill='%2340c057'/%3E%3Cpath d='M0 780 Q500 690 1000 790 T1600 770 V900 H0Z' fill='%232f9e44'/%3E%3Cg fill='%23fff'%3E%3Cellipse cx='640' cy='700' rx='70' ry='58'/%3E%3Ccircle cx='640' cy='625' r='40'/%3E%3Cellipse cx='620' cy='560' rx='12' ry='45'/%3E%3Cellipse cx='660' cy='560' rx='12' ry='45'/%3E%3C/g%3E%3Ccircle cx='627' cy='620' r='6' fill='%23333'/%3E%3Ccircle cx='653' cy='620' r='6' fill='%23333'/%3E%3C/svg%3E"></video>
+    <h1>Big Buck Bunny — Open Movie (4K)</h1>
+    <div class="meta">Blender Studio · 2.4M views · CC BY 3.0</div>
+  </section>
+  <aside class="side">
+    <div class="card"><div class="thumb" style="background:linear-gradient(135deg,#364fc7,#15aabf)"></div><div>Sintel — Open Movie<small>Blender Studio</small></div></div>
+    <div class="card"><div class="thumb" style="background:linear-gradient(135deg,#e8590c,#fab005)"></div><div>Tears of Steel<small>Blender Studio</small></div></div>
+    <div class="card"><div class="thumb" style="background:linear-gradient(135deg,#2b8a3e,#94d82d)"></div><div>Spring — Open Movie<small>Blender Studio</small></div></div>
+    <div class="card"><div class="thumb" style="background:linear-gradient(135deg,#862e9c,#f06595)"></div><div>Cosmos Laundromat<small>Blender Studio</small></div></div>
+  </aside>
+</main>
+<script>
+  // Stand-in for the extension API: the menu items a real lookup would return.
+  let shadow;
+  const attach = Element.prototype.attachShadow;
+  Element.prototype.attachShadow = function (o) { return (shadow = attach.call(this, { ...o, mode: "open" })); };
+  window.chrome = { runtime: {
+    onMessage: { addListener() {} },
+    sendMessage: async (m) => m.type !== "options" ? { ok: true } : { hostOk: true, options: [
+      { label: "Best quality (yt-dlp)", sub: "Detect video on this page · videohub.example/watch/bbb", req: {} },
+      { label: "2160p · MP4 · 1.2 GB", sub: "videohub.example/media/bbb-2160.mp4", req: {} },
+      { label: "1080p · MP4 · 412 MB", sub: "videohub.example/media/bbb-1080.mp4", req: {} },
+      { label: "HLS stream", sub: "videohub.example/hls/bbb/master.m3u8", req: {} },
+    ] },
+  } };
+</script>
+<script src="../extension/content.js"></script>
+<script>
+  // Hover the video, open the button's menu, and fill in a clip.
+  const v = document.getElementById("v");
+  setTimeout(() => {
+    const r = v.getBoundingClientRect();
+    document.dispatchEvent(new MouseEvent("mousemove", { clientX: r.left + r.width / 2, clientY: r.top + r.height / 2 }));
+    if (location.hash !== "#menu") return;
+    setTimeout(() => {
+      shadow.querySelector(".btn").click();
+      setTimeout(() => {
+        const box = shadow.querySelector(".clip-head input");
+        box.checked = true;
+        box.dispatchEvent(new Event("change"));
+        const [from, to] = shadow.querySelectorAll(".field input");
+        from.value = "1:20"; to.value = "2:05";
+        from.blur(); to.blur();
+        const mp4 = [...shadow.querySelectorAll(".chip")].find((c) => c.textContent === "MP4");
+        if (mp4) mp4.click();
+      }, 200);
+    }, 200);
+  }, 300);
+</script>
+</body>
+</html>

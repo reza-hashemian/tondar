@@ -6,12 +6,95 @@ a scheduler, proxy support, and a browser extension that adds a **Download** but
 
 [**⬇ Download the latest version**](https://github.com/reza-hashemian/tondar/releases/latest)
 
-**English:** [Install on Windows](#install-on-windows) · [Install on macOS](#install-on-macos) · [Install on Linux](#install-on-linux) ·
+<p align="center"><img src="docs/screenshots/main-window.png" alt="Tondar's main window: downloads in progress, queued, scheduled and finished" width="860"></p>
+
+**English:** [Features](#features) · [Install on Windows](#install-on-windows) · [Install on macOS](#install-on-macos) · [Install on Linux](#install-on-linux) ·
 [Browser extension](#browser-extension) · [Using Tondar](#using-tondar) · [Troubleshooting](#troubleshooting)
 
 **فارسی:** [راهنمای فارسی](#راهنمای-فارسی)
 
 **Developers:** [For developers](#for-developers)
+
+---
+
+## Features
+
+<table>
+<tr>
+<td width="50%" valign="top">
+
+**Fast, resumable downloads**<br>
+Up to 32 connections per file, and downloads pick up where they stopped, even after a restart or
+a dropped connection. Set how many run at once and a speed limit.
+
+</td>
+<td width="50%" valign="top">
+
+**Videos from YouTube and 1,000+ sites**<br>
+Choose the quality (up to 4K), the format (MP4, MKV, WebM or audio only), a whole playlist, or just
+a part of a video (from 1:20 to 2:05).
+
+</td>
+</tr>
+<tr>
+<td valign="top"><img src="docs/screenshots/new-download-file.png" alt="New Download window for a file"></td>
+<td valign="top"><img src="docs/screenshots/new-download-video.png" alt="New Download window for a video: quality, format and clip"></td>
+</tr>
+<tr>
+<td colspan="2" valign="top">
+
+**A Download button on every video**<br>
+The browser extension adds an orange **Download** button to videos on any website, takes over the
+browser's downloads, and adds **Download with Tondar** to the right-click menu.
+Works in Chrome, Edge, Firefox, Brave, Opera, Vivaldi and Yandex.
+
+<img src="docs/screenshots/extension-menu.png" alt="The extension's Download button and menu on a video page">
+
+</td>
+</tr>
+<tr>
+<td valign="top">
+
+**See every download**<br>
+Each download gets a small window with speed, time left and **Pause**; when it's done,
+**Open** or **Open Folder** in one click.
+
+</td>
+<td valign="top">
+
+**Clone a website**<br>
+Save a website with its pictures, styles and fonts so it opens in your browser without internet.
+Choose how deep to go, and update the copy later with only what changed.
+
+</td>
+</tr>
+<tr>
+<td valign="top"><img src="docs/screenshots/progress-window.png" alt="Progress window of a download"><br><br><img src="docs/screenshots/download-complete.png" alt="Download Complete window"></td>
+<td valign="top"><img src="docs/screenshots/clone-website.png" alt="Clone Website window"></td>
+</tr>
+<tr>
+<td valign="top">
+
+**Scheduler**<br>
+Download at night: start and stop times, days of the week, and shut the computer down when
+everything is finished.
+
+</td>
+<td valign="top">
+
+**Proxy**<br>
+HTTP and SOCKS5 proxies, with a username and password if needed. **Test** checks it works.
+
+</td>
+</tr>
+<tr>
+<td valign="top"><img src="docs/screenshots/scheduler.png" alt="Scheduler settings"></td>
+<td valign="top"><img src="docs/screenshots/proxy.png" alt="Proxy settings"></td>
+</tr>
+</table>
+
+Also: files sorted into Video, Music, Compressed, Programs… folders, a tray icon, start on login,
+and a dark mode that follows your system.
 
 ---
 
@@ -251,7 +334,43 @@ page → **Clone this website with Tondar**)
 
 ## راهنمای فارسی
 
-[نصب روی ویندوز](#نصب-روی-ویندوز) · [نصب روی مک](#نصب-روی-مک) · [نصب روی لینوکس](#نصب-روی-لینوکس) · [افزونه‌ی مرورگر](#افزونه-برای-مرورگر) · [استفاده](#استفاده-از-تندر) · [رفع مشکل](#رفع-مشکل)
+[امکانات](#امکانات) · [نصب روی ویندوز](#نصب-روی-ویندوز) · [نصب روی مک](#نصب-روی-مک) · [نصب روی لینوکس](#نصب-روی-لینوکس) · [افزونه‌ی مرورگر](#افزونه-برای-مرورگر) · [استفاده](#استفاده-از-تندر) · [رفع مشکل](#رفع-مشکل)
+
+### امکانات
+
+**دانلود سریع با قابلیت ادامه:** هر فایل با حداکثر ۳۲ اتصال دانلود می‌شه. اگه اینترنت قطع شد یا کامپیوتر رو خاموش کردی، دانلود از همون‌جایی که مونده ادامه پیدا می‌کنه.
+تعداد دانلودهای هم‌زمان و محدودیت سرعت هم قابل تنظیمه.
+
+**دانلود ویدیو از یوتیوب و بیش از ۱۰۰۰ سایت دیگه:** کیفیت (تا 4K)، فرمت (MP4، MKV، WebM یا فقط صدا)، کل پلی‌لیست یا فقط یه تیکه از ویدیو (مثلاً از ۱:۲۰ تا ۲:۰۵) رو خودت انتخاب می‌کنی.
+
+</div>
+
+<p align="center"><img src="docs/screenshots/new-download-video.png" alt="پنجره‌ی دانلود ویدیو" width="420"></p>
+
+<div dir="rtl">
+
+**دکمه‌ی دانلود روی همه‌ی ویدیوها:** افزونه‌ی مرورگر یه دکمه‌ی نارنجی **Download** روی ویدیوهای هر سایتی می‌ذاره، دانلودهای مرورگر رو به تندر می‌سپره
+و گزینه‌ی **Download with Tondar** رو به منوی راست‌کلیک اضافه می‌کنه. روی کروم، اج، فایرفاکس، بریو، اپرا، ویوالدی و یاندکس کار می‌کنه.
+
+</div>
+
+<p align="center"><img src="docs/screenshots/extension-menu.png" alt="دکمه‌ی دانلود افزونه روی ویدیو" width="760"></p>
+
+<div dir="rtl">
+
+**پنجره‌ی پیشرفت و پایان دانلود:** هر دانلود یه پنجره‌ی کوچیک داره که سرعت، زمان باقی‌مونده و دکمه‌ی **Pause** رو نشون می‌ده. وقتی تموم شد، با یه کلیک فایل یا پوشه‌اش رو باز کن.
+
+**کپی آفلاین از سایت:** یه سایت رو با عکس‌ها، استایل‌ها و فونت‌هاش ذخیره کن تا بدون اینترنت توی مرورگر باز بشه. عمق لینک‌ها رو خودت تعیین می‌کنی و بعداً می‌تونی فقط تغییرات رو به‌روز کنی.
+
+**زمان‌بندی:** دانلود شبانه با ساعت شروع و پایان و روزهای هفته. اگه بخوای، بعد از تموم شدن دانلودها کامپیوتر خاموش می‌شه.
+
+**پروکسی:** HTTP و SOCKS5، با نام کاربری و رمز در صورت نیاز. دکمه‌ی **Test** درست کار کردنش رو چک می‌کنه.
+
+</div>
+
+<p align="center"><img src="docs/screenshots/progress-window.png" alt="پنجره‌ی پیشرفت دانلود" width="380"> <img src="docs/screenshots/scheduler.png" alt="تنظیمات زمان‌بندی" width="420"></p>
+
+<div dir="rtl">
 
 ### نصب روی ویندوز
 
@@ -450,6 +569,7 @@ sudo apt install ./tondar_*_all.deb ffmpeg
 ```sh
 ./tools/build-deb.sh                 # build/tondar_<version>_all.deb
 cd src && TONDAR_APP_ID=io.github.tondar.TondarDev python3 -m tondar   # run next to the installed copy
+./tools/screenshots.py               # README pictures in docs/screenshots, from made-up downloads
 ```
 
 **Releases.** The Windows installer is built by GitHub Actions (`.github/workflows/build.yml`) with MSYS2,
@@ -457,7 +577,7 @@ PyInstaller and Inno Setup; the macOS `.dmg` files (Apple Silicon and Intel) wit
 PyInstaller (`tools/build-macos.sh`). Both bundle a small ffmpeg built by `tools/build-ffmpeg.sh` that can
 only merge and remux, which is all yt-dlp needs from it. Every push builds all packages (see the **Actions** tab). To publish a release:
 
-1. Raise `VERSION` in `src/tondar/__init__.py` (Mozilla signs each version only once).
+1. Raise `VERSION` in `src/tondar/__init__.py` (Mozilla signs each version only once) and the `version` in `extension/manifest.*.json`.
 2. Commit, then `git tag vX.Y.Z && git push origin main vX.Y.Z`.
 
 The release then gets the `.deb`, `Tondar-Setup-X.Y.Z.exe`, the two macOS `.dmg` files and the signed `tondar-firefox-X.Y.Z.xpi`.
@@ -471,7 +591,8 @@ src/tondar/
   media.py       video/stream/playlist downloads through yt-dlp
   net.py         proxy support (HTTP, built-in SOCKS5)
   ipc.py         single-instance support on Windows and macOS
-  macos.py       macOS: browser bridge registration, login item
+  macos.py       macOS: login item, bringing windows to the front
+  bridge.py      tells the browsers where the native messaging bridge is (macOS, Linux)
   app.py         application, command line, notifications
   window.py      main window
   dialogs.py     New Download, Preferences, Browser Integration
@@ -479,7 +600,7 @@ native-host/     bridge between the browser extension and the app (native messag
 extension/       browser extension (Manifest V3, Chromium-based browsers and Firefox)
 windows/         PyInstaller spec, Inno Setup script, native messaging manifests
 macos/           PyInstaller spec for Tondar.app
-tools/           build scripts
+tools/           build scripts, screenshots
 ```
 
 ## Contributors
