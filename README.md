@@ -44,8 +44,8 @@ macOS 12 or newer.
    *can't be opened*. Click **Done**, then open **System Settings → Privacy & Security**, scroll down and
    click **Open Anyway** next to Tondar. (Or run `xattr -cr /Applications/Tondar.app` in Terminal.)
 
-yt-dlp and ffmpeg are included. Tondar registers the browser bridge for Chrome, Edge, Brave, Chromium
-and Firefox each time it starts, so open it once before installing the extension.
+yt-dlp and ffmpeg are included. Tondar registers the browser bridge for Chrome, Edge, Brave, Opera, Vivaldi,
+Yandex, Chromium and Firefox each time it starts, so open it once before installing the extension.
 
 **Update:** drag the new version onto Applications and replace the old one.
 **Uninstall:** move Tondar from Applications to the Trash. Data is in `~/.local/share/tondar` and
@@ -70,21 +70,39 @@ yt-dlp) and `~/.config/tondar` (settings); delete them to remove everything.
 ## Browser extension
 
 The extension sends your browser's downloads to Tondar and adds a **Download** button on videos.
-Install Tondar first.
+Install Tondar first and open it once. Works in Chrome, Edge, Firefox, Brave, Opera / Opera GX,
+Vivaldi, Yandex Browser and Chromium.
 
-**Google Chrome / Microsoft Edge / Chromium**
+**Chrome, Edge, Brave, Opera, Vivaldi, Yandex, Chromium**
 
-1. Open `chrome://extensions` (Edge: `edge://extensions`).
-2. Turn on **Developer mode** (Chrome: top right, Edge: left side).
-3. Click **Load unpacked** and choose the extension folder:
-   - Windows: `%LOCALAPPDATA%\Programs\Tondar\extension\chrome`
-     (paste this into the folder box of the dialog; Windows expands it)
-   - macOS: `/Applications/Tondar.app/Contents/Resources/extension/chrome`
-     (in the dialog press ⌘⇧G and paste this path)
-   - Linux: `/usr/share/tondar/extension/chrome`
-4. Pin the Tondar icon in the toolbar. Its popup should say **Connected**.
+These browsers all use the same extension folder:
 
-Don't move or delete that folder; the browser loads the extension from it.
+- Windows: `%LOCALAPPDATA%\Programs\Tondar\extension\chrome`
+  (paste this into the folder box of the dialog; Windows expands it)
+- macOS: `/Applications/Tondar.app/Contents/Resources/extension/chrome`
+  (in the dialog press ⌘⇧G and paste this path)
+- Linux: `/usr/share/tondar/extension/chrome`
+
+1. Type your browser's extensions page into the address bar:
+
+   | Browser | Extensions page | Developer mode switch |
+   |---|---|---|
+   | Google Chrome | `chrome://extensions` | top right |
+   | Microsoft Edge | `edge://extensions` | left side |
+   | Brave | `brave://extensions` | top right |
+   | Opera / Opera GX | `opera://extensions` | top right |
+   | Vivaldi | `vivaldi://extensions` | top right |
+   | Yandex Browser | `browser://extensions` | top right |
+   | Chromium | `chrome://extensions` | top right |
+
+2. Turn on **Developer mode**.
+3. Click **Load unpacked** and choose the extension folder above.
+4. Pin the Tondar icon in the toolbar (it may be hidden under the extensions button). Its popup
+   should say **Connected**. If it says **App not found**, quit the browser completely and open it again.
+
+Don't move or delete that folder; the browser loads the extension from it. If the browser warns
+about extensions in developer mode, close the warning; don't turn them off.
+After updating Tondar, press the ↻ button on the Tondar card in the extensions page.
 
 **Firefox** (version 140 or newer)
 
@@ -94,6 +112,13 @@ Don't move or delete that folder; the browser loads the extension from it.
    (or drag the file onto a Firefox window). Click **Add**.
 
 The Firefox add-on is signed by Mozilla, so it installs in regular Firefox.
+
+**Safari** isn't supported: Safari only runs extensions packed inside an app signed with a paid
+Apple developer account. Use Chrome, Edge, Firefox or Brave on the Mac.
+
+**Linux note:** browsers installed as Flatpak can't talk to other programs, so use the browser's
+`.deb` version instead. If you install Brave, Opera, Vivaldi or Yandex
+after Tondar, open Tondar once more so it can tell that browser where it is.
 
 ## Using Tondar
 
@@ -209,7 +234,7 @@ page → **Clone this website with Tondar**)
 
 | Problem | Fix |
 |---|---|
-| Extension popup says **App not found** | Make sure Tondar is installed, then restart the browser. On Windows, run the installer again to re-register the browser bridge. |
+| Extension popup says **App not found** | Make sure Tondar is installed, then quit the browser completely and open it again. On Windows, run the installer again to re-register the browser bridge; on macOS and Linux, open Tondar once (it registers newly installed browsers when it starts). Flatpak browsers can't reach Tondar. |
 | No **Download** button on a video | If you pressed its **×**, reload the page. Otherwise reload the page after installing the extension. Very small videos (under 200×110) don't get a button. Use the toolbar icon instead. |
 | YouTube: “Sign in to confirm you're not a bot” | Send the video from the browser while signed in to youtube.com, or pick your browser in Preferences → **Sign-in from browser** (close Chrome / Edge first) and press **Try Again**. Turning a VPN/proxy off or using another network also helps. ☰ → **Install / Update yt-dlp** for other YouTube errors. |
 | Download Complete → **Open** / **Open Folder** froze or closed Tondar | Fixed in 1.4.0 (they no longer use GTK's file launcher). |
@@ -288,22 +313,41 @@ sudo apt install ./tondar_*_all.deb ffmpeg
 
 ### افزونه برای مرورگر
 
-اول خود برنامه رو نصب کن.
+اول خود برنامه رو نصب کن و یه بار بازش کن. افزونه روی کروم، اج، فایرفاکس، بریو، اپرا و اپرا GX،
+ویوالدی، مرورگر یاندکس و کرومیوم کار می‌کنه.
 
-**کروم، اج یا کرومیوم:**
+**کروم، اج، بریو، اپرا، ویوالدی، یاندکس و کرومیوم**
 
-۱. آدرس `chrome://extensions` رو باز کن. توی Edge آدرسش `edge://extensions` هست.
-
-۲. گزینه‌ی **Developer mode** رو روشن کن.
-
-۳. روی **Load unpacked** بزن و پوشه‌ی افزونه رو انتخاب کن:
+همه‌ی این مرورگرها از یه پوشه‌ی افزونه استفاده می‌کنن:
 - ویندوز: `%LOCALAPPDATA%\Programs\Tondar\extension\chrome` (این متن رو توی کادر آدرس پنجره paste کن)
 - مک: `/Applications/Tondar.app/Contents/Resources/extension/chrome` (توی پنجره ⌘⇧G رو بزن و این مسیر رو paste کن)
 - لینوکس: `/usr/share/tondar/extension/chrome`
 
-۴. آیکون تندر رو به نوار ابزار pin کن. وقتی روش بزنی باید **Connected** نشون بده.
+۱. آدرس صفحه‌ی افزونه‌های مرورگرت رو توی نوار آدرس بزن:
 
-این پوشه رو جابه‌جا یا پاک نکن، چون مرورگر افزونه رو از همون‌جا می‌خونه.
+</div>
+
+| مرورگر | صفحه‌ی افزونه‌ها | کلید Developer mode |
+|---|---|---|
+| Google Chrome | `chrome://extensions` | بالا سمت راست |
+| Microsoft Edge | `edge://extensions` | سمت چپ |
+| Brave | `brave://extensions` | بالا سمت راست |
+| Opera / Opera GX | `opera://extensions` | بالا سمت راست |
+| Vivaldi | `vivaldi://extensions` | بالا سمت راست |
+| Yandex Browser | `browser://extensions` | بالا سمت راست |
+| Chromium | `chrome://extensions` | بالا سمت راست |
+
+<div dir="rtl">
+
+۲. گزینه‌ی **Developer mode** رو روشن کن.
+
+۳. روی **Load unpacked** بزن و پوشه‌ی افزونه که بالا نوشتیم رو انتخاب کن.
+
+۴. آیکون تندر رو به نوار ابزار pin کن (ممکنه زیر دکمه‌ی افزونه‌ها قایم شده باشه). وقتی روش بزنی باید **Connected** نشون بده.
+اگه **App not found** نشون داد، مرورگر رو کامل ببند و دوباره باز کن.
+
+این پوشه رو جابه‌جا یا پاک نکن، چون مرورگر افزونه رو از همون‌جا می‌خونه. اگه مرورگر درباره‌ی افزونه‌های developer mode
+هشدار داد، هشدار رو ببند ولی افزونه‌ها رو خاموش نکن. بعد از هر به‌روزرسانی تندر، توی صفحه‌ی افزونه‌ها روی دکمه‌ی ↻ کارت تندر بزن.
 
 **فایرفاکس** (نسخه‌ی ۱۴۰ به بالا):
 
@@ -312,6 +356,12 @@ sudo apt install ./tondar_*_all.deb ffmpeg
 ۲. برو `about:addons`، روی ⚙ بزن، **Install Add-on From File** رو انتخاب کن و فایل رو بده. یا فایل رو بکش و روی پنجره‌ی فایرفاکس رها کن. بعد روی **Add** بزن.
 
 افزونه توسط Mozilla امضا شده، پس روی فایرفاکس معمولی نصب می‌شه.
+
+**سافاری** پشتیبانی نمی‌شه، چون سافاری فقط افزونه‌هایی رو اجرا می‌کنه که داخل یه برنامه‌ی امضاشده با حساب پولی توسعه‌دهنده‌ی اپل باشن.
+روی مک از کروم، اج، فایرفاکس یا بریو استفاده کن.
+
+**نکته برای لینوکس:** مرورگرهایی که به شکل Flatpak نصب شدن نمی‌تونن با برنامه‌های دیگه حرف بزنن، پس نسخه‌ی `.deb` مرورگر رو نصب کن.
+اگه بریو، اپرا، ویوالدی یا یاندکس رو بعد از تندر نصب کردی، یه بار دیگه تندر رو باز کن تا به اون مرورگر معرفی بشه.
 
 ### استفاده از تندر
 
@@ -382,7 +432,7 @@ sudo apt install ./tondar_*_all.deb ffmpeg
 
 ### رفع مشکل
 
-- **آیکون افزونه App not found نشون می‌ده:** مطمئن شو تندر نصبه و مرورگر رو ری‌استارت کن. روی ویندوز، نصب‌کننده رو یه بار دیگه اجرا کن.
+- **آیکون افزونه App not found نشون می‌ده:** مطمئن شو تندر نصبه و مرورگر رو کامل ببند و دوباره باز کن. روی ویندوز، نصب‌کننده رو یه بار دیگه اجرا کن. روی مک و لینوکس، یه بار تندر رو باز کن تا مرورگرهای تازه‌نصب رو بشناسه. مرورگرهای Flatpak به تندر وصل نمی‌شن.
 - **دکمه‌ی Download روی ویدیو نمیاد:** بعد از نصب افزونه صفحه رو رفرش کن. ویدیوهای خیلی کوچیک دکمه نمی‌گیرن. در این صورت از آیکون افزونه توی نوار ابزار استفاده کن.
 - **یوتیوب می‌گه «Sign in to confirm you're not a bot»:** ویدیو رو وقتی توی youtube.com وارد حسابت هستی از مرورگر بفرست، یا توی Preferences گزینه‌ی **Sign-in from browser** رو روی مرورگرت بذار (کروم/اج رو قبلش ببند) و **Try Again** رو بزن. خاموش کردن VPN/پروکسی یا عوض کردن شبکه هم کمک می‌کنه. برای بقیه‌ی خطاهای یوتیوب از ☰ گزینه‌ی **Install / Update yt-dlp** رو بزن.
 - **آیکون تندر کنار ساعت ویندوز نیست:** روی **^** (آیکون‌های مخفی) بزن؛ برای همیشه دیده شدن، آیکون رو بکش روی تسک‌بار.
@@ -426,7 +476,7 @@ src/tondar/
   window.py      main window
   dialogs.py     New Download, Preferences, Browser Integration
 native-host/     bridge between the browser extension and the app (native messaging)
-extension/       browser extension (Manifest V3, Chrome and Firefox)
+extension/       browser extension (Manifest V3, Chromium-based browsers and Firefox)
 windows/         PyInstaller spec, Inno Setup script, native messaging manifests
 macos/           PyInstaller spec for Tondar.app
 tools/           build scripts

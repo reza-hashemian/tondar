@@ -1400,20 +1400,25 @@ class BrowserDialog(Adw.Dialog):
         ext = extension_dir()
 
         g = Adw.PreferencesGroup(
-            title="Google Chrome / Chromium / Brave / Edge",
-            description="1. Open chrome://extensions\n2. Turn on “Developer mode” (top right)\n"
-                        "3. Click “Load unpacked” and choose the folder below",
+            title="Chrome, Edge, Brave, Opera, Vivaldi, Yandex",
+            description="1. Paste your browser's extensions page (below) into the address bar\n"
+                        "2. Turn on “Developer mode”\n"
+                        "3. Click “Load unpacked” and choose the extension folder\n"
+                        "4. Restart the browser if its Tondar icon says “App not found”",
         )
         g.add(self._path_row("Extension folder", os.path.join(ext, "chrome") if ext else None, app))
-        g.add(self._copy_row("Extensions page", "chrome://extensions", app))
+        for name, url in [("Google Chrome", "chrome://extensions"), ("Microsoft Edge", "edge://extensions"),
+                          ("Brave", "brave://extensions"), ("Opera / Opera GX", "opera://extensions"),
+                          ("Vivaldi", "vivaldi://extensions"), ("Yandex Browser", "browser://extensions")]:
+            g.add(self._copy_row(name, url, app))
         page.add(g)
 
         g = Adw.PreferencesGroup(
-            title="Firefox (ESR / Developer Edition)",
-            description="1. Open about:config and set xpinstall.signatures.required to false\n"
-                        "2. Open about:addons → ⚙ → “Install Add-on From File…”\n3. Choose the file below",
+            title="Firefox (140 or newer)",
+            description="1. Download tondar-firefox-x.y.z.xpi from the releases page (below)\n"
+                        "2. Open about:addons → ⚙ → “Install Add-on From File…” and choose it",
         )
-        g.add(self._path_row("Add-on file", os.path.join(ext, "tondar-firefox.xpi") if ext else None, app))
+        g.add(self._copy_row("Releases page", "https://github.com/reza-hashemian/tondar/releases/latest", app))
         page.add(g)
 
         g = Adw.PreferencesGroup(

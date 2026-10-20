@@ -1,44 +1,13 @@
-"""macOS integration for the Tondar.app build: browser bridge, login item, focus."""
+"""macOS integration for the Tondar.app build: login item, focus."""
 
 import ctypes
-import json
 import os
 import plistlib
 import sys
 
 from . import APP_ID
 
-CHROME_ID = "beoabpicfajnboiblppakbnbmlhbkgpf"
-FIREFOX_ID = "tondar@tondar.dm"
-SUPPORT = os.path.expanduser("~/Library/Application Support")
-# Browser profile folders under ~/Library/Application Support that read Chrome-style manifests
-CHROMIUM_BROWSERS = ["Google/Chrome", "Chromium", "Microsoft Edge", "BraveSoftware/Brave-Browser", "Vivaldi"]
 LAUNCH_AGENT = os.path.expanduser(f"~/Library/LaunchAgents/{APP_ID}.plist")
-
-
-def executable(name):
-    """A program in Tondar.app/Contents/MacOS."""
-    return os.path.join(os.path.dirname(sys.executable), name)
-
-
-def register_native_host():
-    """Point the installed browsers at the bridge inside the app, wherever the app was copied to."""
-    host = executable("tondar-native-host")
-    if not os.path.exists(host):
-        return
-    base = {"name": "com.tondar.host", "description": "Tondar Download Manager", "path": host, "type": "stdio"}
-    targets = [(b, dict(base, allowed_origins=[f"chrome-extension://{CHROME_ID}/"])) for b in CHROMIUM_BROWSERS]
-    targets.append(("Mozilla", dict(base, allowed_extensions=[FIREFOX_ID])))
-    for browser, manifest in targets:
-        if browser not in ("Google/Chrome", "Mozilla") and not os.path.isdir(os.path.join(SUPPORT, browser)):
-            continue
-        folder = os.path.join(SUPPORT, browser, "NativeMessagingHosts")
-        try:
-            os.makedirs(folder, exist_ok=True)
-            with open(os.path.join(folder, "com.tondar.host.json"), "w") as f:
-                json.dump(manifest, f, indent=2)
-        except OSError:
-            pass
 
 
 def set_login_item(enabled):

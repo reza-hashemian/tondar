@@ -42,6 +42,11 @@ Name: "{userdesktop}\Tondar"; Filename: "{app}\Tondar.exe"; Tasks: desktopicon
 Root: HKCU; Subkey: "Software\Google\Chrome\NativeMessagingHosts\com.tondar.host"; ValueType: string; ValueName: ""; ValueData: "{app}\native-host-chrome.json"; Flags: uninsdeletekey
 Root: HKCU; Subkey: "Software\Chromium\NativeMessagingHosts\com.tondar.host"; ValueType: string; ValueName: ""; ValueData: "{app}\native-host-chrome.json"; Flags: uninsdeletekey
 Root: HKCU; Subkey: "Software\Microsoft\Edge\NativeMessagingHosts\com.tondar.host"; ValueType: string; ValueName: ""; ValueData: "{app}\native-host-chrome.json"; Flags: uninsdeletekey
+; Brave, Vivaldi and Opera read Chrome's key too; their own keys cover versions that look there instead
+Root: HKCU; Subkey: "Software\BraveSoftware\Brave-Browser\NativeMessagingHosts\com.tondar.host"; ValueType: string; ValueName: ""; ValueData: "{app}\native-host-chrome.json"; Flags: uninsdeletekey
+Root: HKCU; Subkey: "Software\Vivaldi\NativeMessagingHosts\com.tondar.host"; ValueType: string; ValueName: ""; ValueData: "{app}\native-host-chrome.json"; Flags: uninsdeletekey
+Root: HKCU; Subkey: "Software\Opera Software\NativeMessagingHosts\com.tondar.host"; ValueType: string; ValueName: ""; ValueData: "{app}\native-host-chrome.json"; Flags: uninsdeletekey
+Root: HKCU; Subkey: "Software\Yandex\YandexBrowser\NativeMessagingHosts\com.tondar.host"; ValueType: string; ValueName: ""; ValueData: "{app}\native-host-chrome.json"; Flags: uninsdeletekey
 Root: HKCU; Subkey: "Software\Mozilla\NativeMessagingHosts\com.tondar.host"; ValueType: string; ValueName: ""; ValueData: "{app}\native-host-firefox.json"; Flags: uninsdeletekey
 Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "Tondar"; ValueData: """{app}\Tondar.exe"" --background"; Tasks: autostart
 

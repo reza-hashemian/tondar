@@ -49,10 +49,10 @@ class App(Adw.Application):
         self.hold()
         if WINDOWS or MACOS:
             ipc.serve(lambda args: GLib.idle_add(self.handle_args, args))
-        if MACOS and getattr(sys, "frozen", False):
-            from .macos import register_native_host
+        if not WINDOWS:
+            from .bridge import register_installed
 
-            register_native_host()
+            register_installed()
 
         for name, cb, accels in [
             ("add", lambda *_: self.open_add_dialog({}), ["<Primary>n"]),
