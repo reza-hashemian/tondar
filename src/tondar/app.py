@@ -13,6 +13,7 @@ from gi.repository import Adw, Gio, GLib, Gtk  # noqa: E402
 
 from . import APP_ID, VERSION, ipc  # noqa: E402
 from .core import COMPLETED, DOWNLOADING, QUEUED, Item, Manager  # noqa: E402
+from .community import CommunityDialog  # noqa: E402
 from .dialogs import AddWindow, BrowserDialog, CloneWindow, PreferencesDialog  # noqa: E402
 from .popups import CompleteWindow, ProgressWindow  # noqa: E402
 from .media import audio_selector  # noqa: E402
@@ -60,6 +61,8 @@ class App(Adw.Application):
             ("start-all", lambda *_: self.manager.start_all(), []),
             ("pause-all", lambda *_: self.manager.pause_all(), []),
             ("clear-completed", lambda *_: self._clear_completed(), []),
+            ("clear-queued", lambda *_: self.present_main().confirm_clear_queued(), []),
+            ("community", lambda *_: CommunityDialog(self).present(self.present_main()), []),
             ("preferences", lambda *_: PreferencesDialog(self).present(self.present_main()), ["<Primary>comma"]),
             ("browser", lambda *_: BrowserDialog(self).present(self.present_main()), []),
             ("scheduler", lambda *_: PreferencesDialog(self, "scheduler").present(self.present_main()), []),

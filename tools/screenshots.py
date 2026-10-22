@@ -292,6 +292,14 @@ def main():
         later(1500, lambda: save(state["browser"], "browser-integration"))
         later(1500, lambda: state["browser"].force_close())
 
+        def community():
+            from tondar.community import CommunityDialog
+            state["community"] = CommunityDialog(app)
+            state["community"].present(win)
+        later(100, community)
+        later(1500, lambda: save(state["community"], "updates-and-news"))
+        later(1500, lambda: state["community"].force_close())
+
         GLib.timeout_add(300, run_steps)
         GLib.timeout_add_seconds(90, lambda: app.quit())  # never hang
 

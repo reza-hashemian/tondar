@@ -55,6 +55,8 @@ DEFAULT_SETTINGS = {
     # yt-dlp may read the YouTube sign-in from this browser when YouTube asks to prove you're not a bot
     # ("" = never).
     "cookies_browser": "",
+    # When the "follow the Telegram channel" reminder was last shown (0 = not yet).
+    "support_last": 0,
 }
 
 

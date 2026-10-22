@@ -177,6 +177,24 @@ def open_uri(path, parent=None):
         _gio_open(path)
 
 
+def open_url(url):
+    """Open a web address in the default browser."""
+    if MACOS:
+        _quiet_popen(["open", url])
+    elif WINDOWS:
+        _win_start(url)
+    elif shutil.which("xdg-open"):
+        _quiet_popen(["xdg-open", url], start_new_session=True)
+    else:
+        def done(_src, res):
+            try:
+                Gio.AppInfo.launch_default_for_uri_finish(res)
+            except GLib.Error as e:
+                print("Tondar: can't open", url, "-", e.message)
+
+        Gio.AppInfo.launch_default_for_uri_async(url, None, None, done)
+
+
 def show_in_folder(path, parent=None):
     """Open the folder with `path` selected."""
     if MACOS:  # GTK asks a D-Bus file manager, which macOS doesn't have
@@ -521,6 +539,8 @@ class MainWindow(Adw.ApplicationWindow):
         header.pack_start(clone)
         header.pack_start(Gtk.Button(icon_name="media-playback-start-symbolic", tooltip_text="Resume All", action_name="app.start-all"))
         header.pack_start(Gtk.Button(icon_name="media-playback-pause-symbolic", tooltip_text="Pause All", action_name="app.pause-all"))
+        header.pack_start(Gtk.Button(icon_name="edit-clear-all-symbolic", tooltip_text="Remove All Queued",
+                                     action_name="app.clear-queued"))
 
         self.search_entry = Gtk.SearchEntry(placeholder_text="Search downloads", width_chars=24)
         self.search_entry.connect("search-changed", self._on_search)
@@ -531,6 +551,7 @@ class MainWindow(Adw.ApplicationWindow):
         s1.append("Add Download…", "app.add")
         s1.append("Clone Website…", "app.clone")
         s1.append("Remove Completed", "app.clear-completed")
+        s1.append("Remove All Queued", "app.clear-queued")
         s2 = Gio.Menu()
         s2.append("Preferences", "app.preferences")
         s2.append("Scheduler", "app.scheduler")
@@ -538,6 +559,7 @@ class MainWindow(Adw.ApplicationWindow):
         s2.append("Browser Integration", "app.browser")
         s2.append("Install / Update yt-dlp", "app.ytdlp")
         s3 = Gio.Menu()
+        s3.append("Updates & News", "app.community")
         s3.append("About Tondar", "app.about")
         s3.append("Quit", "app.quit")
         for s in (s1, s2, s3):
@@ -589,6 +611,10 @@ class MainWindow(Adw.ApplicationWindow):
         self.add_controller(drop)
 
         self.connect("close-request", self._on_close)
+
+        from .community import Reminder
+
+        self.reminder = Reminder(self)
 
     # --- list management ------------------------------------------------------------
     def _add_row(self, item):
@@ -674,6 +700,33 @@ class MainWindow(Adw.ApplicationWindow):
         if limit:
             text += f"  ·  limited to {human_size(limit * 1024)}/s"
         self.status_label.set_label(text)
+        self.reminder.tick()
+
+    def confirm_clear_queued(self):
+        queued = [i for i in self.manager.items if i.status == QUEUED]
+        if not queued:
+            self.toast("No downloads are waiting in the queue")
+            return
+        n = len(queued)
+        dialog = Adw.AlertDialog(
+            heading=f"Remove {n} Queued Download{'s' if n != 1 else ''}?",
+            body="Downloads waiting in the queue are removed from the list, along with anything they "
+                 "had already downloaded. Running and finished downloads are not touched.",
+        )
+        dialog.add_response("cancel", "Cancel")
+        dialog.add_response("remove", "Remove")
+        dialog.set_response_appearance("remove", Adw.ResponseAppearance.DESTRUCTIVE)
+
+        def on_response(_d, response):
+            if response != "remove":
+                return
+            # Still waiting now (some may have started while the dialog was open).
+            items = [i for i in queued if i.status == QUEUED and i in self.manager.items]
+            self.manager.remove_many(items)
+            self.toast(f"Removed {len(items)} queued download{'s' if len(items) != 1 else ''}")
+
+        dialog.connect("response", on_response)
+        dialog.present(self)
 
     def remove_item(self, item, delete_file):
         if not delete_file:
@@ -702,6 +755,7 @@ class MainWindow(Adw.ApplicationWindow):
         return False
 
     def _on_close(self, _win):
+        self.reminder.hidden()
         if self.manager.settings["background"]:
             self.set_visible(False)
             if self.manager.active_count():
