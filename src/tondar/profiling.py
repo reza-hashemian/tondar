@@ -21,16 +21,8 @@ PHASES = ("before-paint", "update", "layout", "paint", "after-paint")
 WATCH_SECONDS = 1.5
 
 enabled = "--profile" in sys.argv
-_gtk_log = None
-if enabled and sys.platform == "win32":
-    # A windowed build has no console: send GTK's own messages (written to the C-level stderr)
-    # to a file, to be copied into the report.
-    try:
-        _gtk_log = os.path.join(data_dir(), "profile-gtk.txt")
-        _fd = os.open(_gtk_log, os.O_WRONLY | os.O_CREAT | os.O_TRUNC)
-        os.dup2(_fd, 2)
-    except OSError:
-        _gtk_log = None
+# GTK's own messages, written there by the Windows launcher (windows/run_tondar.py).
+_gtk_log = os.path.join(data_dir(), "profile-gtk.txt") if enabled and sys.platform == "win32" else None
 _t0 = time.perf_counter()
 _file = None
 _busy = False
@@ -73,16 +65,20 @@ def describe(app, win):
     if surface is not None:
         write(f"Window scale {surface.get_scale():g}, display {type(win.get_display()).__name__}")
     _check_gpu(win)
-    if _gtk_log:
-        try:
-            with open(_gtk_log, encoding="utf-8", errors="replace") as f:
-                text = f.read().strip()
-            write("GTK messages:\n" + (text[-6000:] if text else "(none)"))
-        except OSError:
-            pass
     write(f"Downloads in list: {len(app.manager.items)}")
     write(f"Main window first frame: {1000 * (time.perf_counter() - _t0):.0f} ms after start")
     GLib.timeout_add(1500, lambda: _renderer_experiments(win) and False)
+
+
+def _copy_gtk_log():
+    text = "(not on this system)"
+    if _gtk_log:
+        try:
+            with open(_gtk_log, encoding="utf-8", errors="replace") as f:
+                text = f.read().strip()[-8000:] or "(none)"
+        except OSError as e:
+            text = f"(couldn't read: {e})"
+    write("GTK messages:\n" + text + "\n")
 
 
 def _renderer_name(win):
@@ -117,7 +113,8 @@ def _renderer_experiments(win):
 
         def after_map(*_):
             def check():
-                write(f"Main window made again: {before} -> {_renderer_name(win)}\n")
+                write(f"Main window made again: {before} -> {_renderer_name(win)}")
+                _copy_gtk_log()
                 return False
             GLib.timeout_add(300, check)
 
