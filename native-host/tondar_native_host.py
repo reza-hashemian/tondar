@@ -13,6 +13,7 @@ import shutil
 import struct
 import subprocess
 import sys
+import tempfile
 
 VERSION = "1.3.1"
 WINDOWS = sys.platform == "win32"
@@ -65,6 +66,12 @@ def main():
     elif cmd == "add" and isinstance(msg.get("item"), dict):
         payload = base64.urlsafe_b64encode(json.dumps(msg["item"]).encode()).decode().rstrip("=")
         args = ["--add", payload]
+        if len(payload) > 20000:
+            # Many links at once: too long for a command line (Windows allows 32 767 characters).
+            fd, path = tempfile.mkstemp(prefix="tondar-add-", suffix=".json")
+            with os.fdopen(fd, "w") as f:
+                json.dump(msg["item"], f)
+            args = ["--add-file", path]
         if WINDOWS or MACOS:
             if WINDOWS:
                 # We were started by the browser, which has the focus: pass the right to take it to Tondar.

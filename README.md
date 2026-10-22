@@ -217,6 +217,12 @@ after Tondar, open Tondar once more so it can tell that browser where it is.
   **Take over browser downloads**.
 - Several links sent from the browser at once open one after another: the **New Download** window
   shows “N more links from the browser” and **Add All Now** adds the rest straight away.
+- **Many links at once** (all episodes of a series): select the part of the page with the links,
+  right-click → **Download selected links with Tondar**. One window lists them all with a checkbox
+  each: untick the ones you don't want, choose the folder once (optionally a new folder such as the
+  series name) and press **Download N Files**. They go into the queue in the page's order.
+- **Keyboard shortcuts:** ☰ → **Keyboard Shortcuts** (Ctrl+? or F1) lists them all. A few: Ctrl+V adds the
+  copied link, Ctrl+F searches, Ctrl+R / Ctrl+P resume / pause all, Ctrl+1…9 switch categories.
 
 **Videos and playlists**
 - Hover a video on any website and click the orange **Download** button. It lists the video
@@ -230,6 +236,11 @@ after Tondar, open Tondar once more so it can tell that browser where it is.
   (**Audio only** is at the bottom of the list).
 - For a playlist link, every video is listed with a checkbox. The videos are saved in a folder named
   after the playlist, numbered in order. Turn off **Download entire playlist** to get only one video.
+- **Big YouTube playlists** don't get your connection blocked: with **Gentle mode for YouTube**
+  (Preferences, on by default) at most 2 YouTube videos download at once, with a few seconds between
+  them. If YouTube still says “too many requests”, Tondar takes a 10-minute break and continues by
+  itself; if it asks to confirm you're not a bot, the remaining videos are paused instead of failing
+  one by one.
 - **Format:** the **Format** row lists the containers the site offers (MP4, WebM, …, shown under
   **Formats on this site**) and MKV/MP4 repackaging at the same quality. On the page, the orange
   button's menu has the same choice under **Format** (Auto / MP4 / MKV / WebM / Audio only).
@@ -491,6 +502,8 @@ sudo apt install ./tondar_*_all.deb ffmpeg
 - با **راست‌کلیک** روی هر لینک (یا ویدیو، صدا و عکس) گزینه‌ی **Download with Tondar** میاد. روی دکمه‌های دانلودی که لینک واقعی نیستن هم همین گزینه نشون داده می‌شه.
 - اگه می‌خوای مرورگر دوباره خودش دانلود کنه، روی آیکون تندر توی نوار ابزار بزن و تیک **Take over browser downloads** رو بردار.
 - اگه چند تا لینک رو پشت سر هم از مرورگر بفرستی، یکی‌یکی باز می‌شن: پنجره‌ی **New Download** می‌نویسه «N more links from the browser» و دکمه‌ی **Add All Now** بقیه رو یه‌جا اضافه می‌کنه.
+- **چند لینک با هم** (مثلاً همه‌ی قسمت‌های یه سریال): قسمتی از صفحه که لینک‌ها توشه رو انتخاب (سلکت) کن، راست‌کلیک و **Download selected links with Tondar**. یه پنجره همه رو با تیک نشون می‌ده: تیک قسمت‌هایی که نمی‌خوای رو بردار، پوشه رو یه بار انتخاب کن (اگه خواستی یه پوشه‌ی جدید به اسم سریال) و **Download N Files** رو بزن. همه به ترتیب صفحه توی صف می‌رن.
+- **میانبرهای کیبورد:** از ☰ گزینه‌ی **Keyboard Shortcuts** (یا Ctrl+? یا F1) همه رو نشون می‌ده. چند تاش: Ctrl+V لینک کپی‌شده رو اضافه می‌کنه، Ctrl+F جستجو، Ctrl+R / Ctrl+P ادامه / توقف همه، Ctrl+1 تا 9 عوض کردن دسته‌ها.
 
 **ویدیو و پلی‌لیست**
 - با دکمه‌ی **×** کنار دکمه‌ی Download، اون دکمه توی همون صفحه بسته می‌شه. با رفرش صفحه دوباره برمی‌گرده.
@@ -498,6 +511,7 @@ sudo apt install ./tondar_*_all.deb ffmpeg
 - موس رو روی ویدیوی هر سایتی ببر و دکمه‌ی نارنجی **Download** رو بزن. لیست فایل‌ها و استریم‌های ویدیوی اون صفحه رو نشون می‌ده، به‌علاوه‌ی گزینه‌ی **Best quality (yt-dlp)**.
 - یا لینک یوتیوب، آپارات، اینستاگرام و… رو بده، **Type** رو روی **Video / stream** بذار و کیفیت رو انتخاب کن. گزینه‌ی **Audio only** (فقط صدا) آخر لیسته.
 - برای لینک پلی‌لیست، همه‌ی ویدیوها با تیک نشون داده می‌شن. ویدیوها توی پوشه‌ای به اسم پلی‌لیست و به ترتیب شماره‌گذاری ذخیره می‌شن. اگه فقط یه ویدیو می‌خوای، **Download entire playlist** رو خاموش کن.
+- **پلی‌لیست‌های بزرگ یوتیوب** باعث بلاک شدن اینترنتت نمی‌شن: با **Gentle mode for YouTube** (توی Preferences، پیش‌فرض روشن) حداکثر ۲ ویدیوی یوتیوب با هم و با چند ثانیه فاصله دانلود می‌شن. اگه یوتیوب باز هم بگه «too many requests»، تندر ۱۰ دقیقه صبر می‌کنه و خودش ادامه می‌ده. اگه بپرسه ربات نیستی، بقیه‌ی ویدیوها متوقف می‌شن تا یکی‌یکی خطا ندن.
 - **فرمت:** ردیف **Format** فرمت‌هایی که سایت داره (MP4، WebM و…، زیر **Formats on this site**) و تبدیل بدون افت کیفیت به MKV/MP4 رو نشون می‌ده. توی صفحه هم پایین منوی دکمه‌ی نارنجی، زیر **Format** همین انتخاب هست (Auto / MP4 / MKV / WebM / Audio only).
 - **دانلود فقط یه تیکه از ویدیو:** **Download only a part** (توی منوی دکمه‌ی نارنجی با علامت ✂) رو روشن کن و **From** و **To** رو بنویس (مثلاً `1:20`، `90` یا `1:02:03`؛ اگه **To** خالی باشه تا آخر ویدیو). توی صفحه دکمه‌ی **Now** زمان فعلی پخش‌کننده رو برمی‌داره. اسم فایل جدا می‌شه، مثل `Video (clip 1m20s-2m05s).mp4`. برش از نزدیک‌ترین کی‌فریم شروع می‌شه، پس ممکنه یکی دو ثانیه زودتر شروع بشه.
 - سایت‌ها زیاد تغییر می‌کنن. اگه دانلود ویدیو کار نکرد، از ☰ گزینه‌ی **Install / Update yt-dlp** رو بزن.
@@ -596,6 +610,9 @@ src/tondar/
   app.py         application, command line, notifications
   window.py      main window
   dialogs.py     New Download, Preferences, Browser Integration
+  batch.py       many links at once (selected in the browser)
+  community.py   Updates & News window, the occasional "follow the channel" reminder
+  shortcuts.py   Keyboard Shortcuts window
 native-host/     bridge between the browser extension and the app (native messaging)
 extension/       browser extension (Manifest V3, Chromium-based browsers and Firefox)
 windows/         PyInstaller spec, Inno Setup script, native messaging manifests

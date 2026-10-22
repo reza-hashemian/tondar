@@ -3,6 +3,7 @@
 
 const HOST = "com.tondar.host";
 const MAX_PER_TAB = 25;
+const MAX_BATCH = 500; // links sent at once from a selection
 const MEDIA_SITES = /(^|\.)(youtube\.com|youtu\.be|vimeo\.com|dailymotion\.com|aparat\.com|twitter\.com|x\.com|instagram\.com|facebook\.com|tiktok\.com|twitch\.tv|soundcloud\.com|reddit\.com|namava\.ir|filimo\.com)$/;
 
 const media = new Map(); // tabId -> [{url, kind, label, size, type, time}]
@@ -50,6 +51,14 @@ async function cookiesFor(...urls) {
   return [...seen.values()];
 }
 
+function oneLinkPerHost(links) {
+  const hosts = new Map();
+  for (const l of links || []) {
+    try { const h = new URL(l.url).host; if (!hosts.has(h)) hosts.set(h, l.url); } catch (e) { /* ignore */ }
+  }
+  return [...hosts.values()];
+}
+
 async function sendToApp(req) {
   const item = {
     url: req.url,
@@ -62,8 +71,9 @@ async function sendToApp(req) {
     ...(req.clip && typeof req.clip === "object" ? { clip: { start: Number(req.clip.start) || 0, end: req.clip.end == null ? -1 : Number(req.clip.end) } } : {}),
     ...(req.container ? { container: String(req.container) } : {}),
     ...(req.audio ? { audio: true } : {}),
+    ...(Array.isArray(req.links) ? { links: req.links } : {}),
     user_agent: navigator.userAgent,
-    cookies: await cookiesFor(req.url, req.kind === "media" ? req.pageUrl : null),
+    cookies: await cookiesFor(req.url, req.kind === "media" || req.links ? req.pageUrl : null, ...oneLinkPerHost(req.links)),
   };
   let resp;
   try {
@@ -330,6 +340,7 @@ function createMenus() {
     chrome.contextMenus.create({ id: "media", title: "Download with Tondar", contexts: ["video", "audio", "image"] });
     chrome.contextMenus.create({ id: "page", title: PAGE_TITLE, contexts: ["page", "frame"] });
     chrome.contextMenus.create({ id: "clone", title: "Clone this website with Tondar", contexts: ["page"] });
+    chrome.contextMenus.create({ id: "selection", title: "Download selected links with Tondar", contexts: ["selection"] });
   });
 }
 chrome.runtime.onInstalled.addListener(createMenus);
@@ -354,9 +365,40 @@ function tell(tab, frameId, text, ok) {
   chrome.tabs.sendMessage(tab.id, { type: "toast", text, ok }, { frameId: frameId || 0 }).catch(() => {});
 }
 
+// Several links selected at once (the episodes of a series…): one window in Tondar lists them all.
+async function downloadSelection(info, tab, pageUrl, title) {
+  let links = [];
+  if (tab) {
+    const r = await chrome.tabs.sendMessage(tab.id, { type: "selectionLinks" }, { frameId: info.frameId || 0 }).catch(() => null);
+    if (r && Array.isArray(r.links)) links = r.links;
+  }
+  if (!links.length) { // no content script in this frame: links written out in the selected text
+    const seen = new Set();
+    for (const m of (info.selectionText || "").matchAll(/https?:\/\/[^\s"'<>]+/gi)) {
+      const url = m[0].replace(/[.,;:!?)\]]+$/, "");
+      if (!seen.has(url)) { seen.add(url); links.push({ url, text: "" }); }
+    }
+  }
+  links = links.slice(0, MAX_BATCH);
+  if (!links.length) {
+    tell(tab, info.frameId, "No links in the selected text", false);
+    return;
+  }
+  const req = links.length === 1
+    ? { url: links[0].url, kind: "http", referer: pageUrl, pageUrl }
+    : { url: pageUrl, kind: "batch", links, referer: pageUrl, pageUrl, title };
+  try {
+    await sendToApp(req);
+    tell(tab, info.frameId, links.length === 1 ? "Sent to Tondar" : `Sent ${links.length} links to Tondar`, true);
+  } catch (e) {
+    tell(tab, info.frameId, e.message, false);
+  }
+}
+
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   const pageUrl = info.pageUrl || (tab && tab.url) || "";
   const title = (tab && tab.title) || "";
+  if (info.menuItemId === "selection") return downloadSelection(info, tab, pageUrl, title);
   let req;
   if (info.menuItemId === "link") req = { url: info.linkUrl, kind: "http", referer: pageUrl, pageUrl };
   else if (info.menuItemId === "media" && /^https?:/i.test(info.srcUrl || "")) req = { url: info.srcUrl, kind: "http", referer: pageUrl, pageUrl, title };

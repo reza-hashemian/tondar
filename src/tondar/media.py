@@ -45,17 +45,21 @@ def _search_path():
 BOT_CHECK = re.compile(r"confirm you.?re not a bot|sign in to confirm|Use --cookies-from-browser", re.I)
 YOUTUBE = re.compile(r"(^|\.)(youtube\.com|youtu\.be|youtube-nocookie\.com)$")
 BROWSERS = ["firefox", "chrome", "edge", "brave", "chromium", "opera", "vivaldi", "safari"]
-_settings = {"cookies_browser": ""}
+_settings = {"cookies_browser": "", "gentle": True}
 
 
 def configure(settings):
     """Options from Preferences that change how yt-dlp is run."""
     browser = (settings.get("cookies_browser") or "").lower()
     _settings["cookies_browser"] = browser if browser in BROWSERS else ""
+    _settings["gentle"] = bool(settings.get("youtube_gentle", True))
 
 
 def is_youtube(url):
     return bool(YOUTUBE.search(urllib.parse.urlparse(url or "").hostname or ""))
+
+
+TOO_MANY = re.compile(r"HTTP Error 429|Too Many Requests|rate.?limited", re.I)
 
 
 def is_bot_check(error):
@@ -562,6 +566,8 @@ class MediaTask:
         self.on_done = on_done
         self.stopped = threading.Event()
         self.proc = None
+        self.throttled = False  # YouTube said "too many requests"
+        self.bot_check = False
 
     def start(self):
         threading.Thread(target=self._run, daemon=True).start()
@@ -607,6 +613,8 @@ class MediaTask:
             if not error:
                 it.url = fallback  # a restart shouldn't hit the dead stream link again
         if error:
+            self.throttled = bool(TOO_MANY.search(error))
+            self.bot_check = is_bot_check(error)
             raise RuntimeError(_friendly(error))
 
     def _try(self, cmd, name, url):
@@ -648,6 +656,9 @@ class MediaTask:
         ] + _header_args(it, self.proxy) + _ffmpeg_args() + _encoding_args()
         if generic:
             args.append("--force-generic-extractor")
+        if is_youtube(url) and _settings["gentle"]:
+            # A short pause between the page requests yt-dlp makes, like a person clicking around.
+            args += ["--sleep-requests", "1", "--extractor-retries", "3"]
         args += cookie_args
         if self.limiter.rate > 0:
             args += ["-r", str(int(self.limiter.rate))]

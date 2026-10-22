@@ -5,6 +5,7 @@ import datetime
 import json
 import locale
 import os
+import random
 import shutil
 import threading
 import time
@@ -13,7 +14,7 @@ import uuid
 
 from .clone import SiteTask
 from .http_task import HttpTask, RateLimiter
-from .media import MediaTask
+from .media import MediaTask, is_youtube
 from .net import proxy_url
 from .util import category_for, config_dir, data_dir, downloads_dir, unique_path
 
@@ -57,7 +58,16 @@ DEFAULT_SETTINGS = {
     "cookies_browser": "",
     # When the "follow the Telegram channel" reminder was last shown (0 = not yet).
     "support_last": 0,
+    # Big YouTube playlists: few videos at once with a pause between them, and a long break when
+    # YouTube says "too many requests", so it doesn't block the connection.
+    "youtube_gentle": True,
 }
+
+YT_PARALLEL = 2  # YouTube videos at the same time (gentle mode)
+YT_GAP = (4, 10)  # seconds between starting two YouTube videos
+YT_COOLDOWN = 10 * 60  # break after "too many requests"; longer each time it happens again
+YT_RETRIES = 3  # times a video goes back in the queue after "too many requests"
+
 
 
 class Item:
@@ -182,6 +192,9 @@ class Manager:
         self.on_finished = []
         self.on_schedule_started = []
         self.on_schedule_done = []
+        self.on_youtube_blocked = []  # (paused count, cooldown seconds or 0 for a bot check)
+        self._yt_next = 0.0  # monotonic time before which no YouTube video starts
+        self.youtube_wait_until = 0.0  # wall-clock end of a "too many requests" break (status bar)
         self._session = None  # date of the scheduler session in progress
         self._session_ids = set()
         self._session_done = False
@@ -386,12 +399,23 @@ class Manager:
     def active_count(self):
         return sum(1 for i in self.items if i.status in (DOWNLOADING, PAUSING))
 
+    def _gentle(self, item):
+        return item.kind == "media" and self.settings.get("youtube_gentle", True) and is_youtube(item.url)
+
     def schedule(self):
         free = int(self.settings["max_active"]) - self.active_count()
+        now = time.monotonic()
+        yt_running = sum(1 for i in self.items if i.status in (DOWNLOADING, PAUSING) and self._gentle(i))
         for item in self.items:
             if free <= 0:
                 break
             if item.status == QUEUED and item.id not in self.tasks:
+                if self._gentle(item):
+                    # Other downloads behind it may still start.
+                    if yt_running >= YT_PARALLEL or now < self._yt_next:
+                        continue
+                    yt_running += 1
+                    self._yt_next = now + random.uniform(*YT_GAP)
                 self._launch(item)
                 free -= 1
 
@@ -433,8 +457,26 @@ class Manager:
             # Paused (or removed) by the user.
             if item.status == PAUSING:
                 item.status = PAUSED
+        elif error and getattr(task, "throttled", False) and self._gentle(item) \
+                and getattr(item, "_throttled", 0) < YT_RETRIES:
+            # "Too many requests": wait, then try this video again.
+            item._throttled = getattr(item, "_throttled", 0) + 1
+            pause = YT_COOLDOWN * item._throttled
+            self._yt_next = time.monotonic() + pause
+            self.youtube_wait_until = time.time() + pause
+            item.status, item.done, item.size = QUEUED, 0, -1
+            for cb in self.on_youtube_blocked:
+                cb(0, pause)
         elif error:
             item.status, item.error = ERROR, error
+            if getattr(task, "bot_check", False) and self._gentle(item):
+                # Every other YouTube video would hit the same check: stop asking for now.
+                waiting = [i for i in self.items if i.status == QUEUED and self._gentle(i)]
+                for i in waiting:
+                    i.status = PAUSED
+                if waiting:
+                    for cb in self.on_youtube_blocked:
+                        cb(len(waiting), 0)
         else:
             item.status, item.finished, item.error = COMPLETED, time.time(), ""
             item.segments = []

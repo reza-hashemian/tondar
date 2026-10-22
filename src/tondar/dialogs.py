@@ -1102,6 +1102,9 @@ class PreferencesDialog(Adw.PreferencesDialog):
         signin.connect("notify::selected", lambda r, _p: self._set(
             "cookies_browser", browsers[r.get_selected() - 1] if r.get_selected() else ""))
         g.add(signin)
+        g.add(self._switch("youtube_gentle", "Gentle mode for YouTube",
+                           "At most 2 YouTube videos at once with a short pause between them, and a break when "
+                           "YouTube says “too many requests”. Keeps big playlists from getting your connection blocked."))
         page.add(g)
         self.add(page)
         self.add(self._network_page())

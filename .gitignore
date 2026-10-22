@@ -5,3 +5,5 @@ __pycache__/
 /windows/Output/
 /promo/video/node_modules/
 /promo/video/out/
+/promo/audio/.venv/
+/promo/audio/*.wav

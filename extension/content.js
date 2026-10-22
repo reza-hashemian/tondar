@@ -358,8 +358,37 @@
     toastTimer = setTimeout(() => toastBox.remove(), ok ? 2500 : 5000);
   }
 
+  // The links inside the selected text, in page order ("Download selected links with Tondar").
+  function selectionLinks() {
+    const sel = window.getSelection();
+    const out = [], seen = new Set();
+    const push = (url, text) => {
+      if (typeof url !== "string" || !/^https?:/i.test(url)) return;
+      const key = url.split("#")[0];
+      if (seen.has(key)) return;
+      seen.add(key);
+      out.push({ url: key, text: (text || "").replace(/\s+/g, " ").trim().slice(0, 200) });
+    };
+    if (!sel || sel.isCollapsed) return out;
+    for (let i = 0; i < sel.rangeCount; i++) {
+      const range = sel.getRangeAt(i);
+      let node = range.commonAncestorContainer;
+      if (node.nodeType !== 1) node = node.parentElement;
+      if (!node) continue;
+      const own = node.closest("a[href]"); // the selection is inside one link
+      if (own) push(own.href, own.textContent);
+      for (const a of node.querySelectorAll("a[href]")) {
+        if (range.intersectsNode(a)) push(a.href, a.textContent);
+      }
+    }
+    // Addresses written out as plain text.
+    for (const m of sel.toString().matchAll(/https?:\/\/[^\s"'<>]+/gi)) push(m[0].replace(/[.,;:!?)\]]+$/, ""), "");
+    return out;
+  }
+
   chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (msg.type === "postUrl") sendResponse({ postUrl: menuPostUrl, target: menuTarget });
+    else if (msg.type === "selectionLinks") sendResponse({ links: selectionLinks() });
     else if (msg.type === "scan") sendResponse({ found: scanPage() });
     else if (msg.type === "toast") { toast(msg.text, msg.ok); sendResponse({ ok: true }); }
   });

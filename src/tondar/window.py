@@ -559,6 +559,7 @@ class MainWindow(Adw.ApplicationWindow):
         s2.append("Browser Integration", "app.browser")
         s2.append("Install / Update yt-dlp", "app.ytdlp")
         s3 = Gio.Menu()
+        s3.append("Keyboard Shortcuts", "app.shortcuts")
         s3.append("Updates & News", "app.community")
         s3.append("About Tondar", "app.about")
         s3.append("Quit", "app.quit")
@@ -611,10 +612,45 @@ class MainWindow(Adw.ApplicationWindow):
         self.add_controller(drop)
 
         self.connect("close-request", self._on_close)
+        self._add_shortcuts()
 
         from .community import Reminder
 
         self.reminder = Reminder(self)
+
+    def _add_shortcuts(self):
+        keys = Gtk.ShortcutController()
+
+        def add(trigger, fn):
+            keys.add_shortcut(Gtk.Shortcut.new(Gtk.ShortcutTrigger.parse_string(trigger), Gtk.CallbackAction.new(fn)))
+
+        def focus_search(*_):
+            self.search_entry.grab_focus()
+            return True
+
+        def paste(*_):
+            # Ctrl+V outside a text box: a new download with the copied link.
+            if isinstance(self.get_focus(), Gtk.Text):
+                return False
+            self.app.open_add_dialog({})
+            return True
+
+        def close(*_):
+            self.close()
+            return True
+
+        add("<Primary>f", focus_search)
+        add("<Primary>v", paste)
+        add("<Primary>w", close)
+        for n in range(1, 10):
+            add(f"<Primary>{n}", lambda *_, n=n: self._select_filter(n - 1))
+        self.add_controller(keys)
+
+    def _select_filter(self, index):
+        row = self.sidebar.get_row_at_index(index)
+        if row:
+            self.sidebar.select_row(row)
+        return True
 
     # --- list management ------------------------------------------------------------
     def _add_row(self, item):
@@ -696,6 +732,10 @@ class MainWindow(Adw.ApplicationWindow):
             text += f"  ·  scheduler on ({st['schedule_start']}{'–' + st['schedule_stop'] if st['schedule_stop'] else ''})"
         if st["proxy_mode"] == "manual" and st["proxy_host"]:
             text += f"  ·  proxy {st['proxy_host']}:{st['proxy_port']}"
+        if self.manager.youtube_wait_until > time.time() and any(
+                i.status == QUEUED and self.manager._gentle(i) for i in self.manager.items):
+            until = time.strftime("%H:%M", time.localtime(self.manager.youtube_wait_until))
+            text += f"  ·  YouTube asked to slow down: continuing at {until}"
         limit = int(self.manager.settings["speed_limit_kb"])
         if limit:
             text += f"  ·  limited to {human_size(limit * 1024)}/s"
@@ -744,8 +784,8 @@ class MainWindow(Adw.ApplicationWindow):
         dialog.connect("response", lambda _d, r: r == "delete" and self.manager.remove(item, True))
         dialog.present(self)
 
-    def toast(self, text):
-        self.toasts.add_toast(Adw.Toast(title=text, timeout=3))
+    def toast(self, text, timeout=3):
+        self.toasts.add_toast(Adw.Toast(title=text, timeout=timeout))
 
     def _on_drop(self, _target, value, _x, _y):
         url = value.strip().splitlines()[0] if value else ""

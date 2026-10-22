@@ -3,6 +3,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 import traceback
 
 import gi
@@ -14,6 +15,8 @@ from gi.repository import Adw, Gio, GLib, Gtk  # noqa: E402
 from . import APP_ID, VERSION, ipc  # noqa: E402
 from .core import COMPLETED, DOWNLOADING, QUEUED, Item, Manager  # noqa: E402
 from .community import CommunityDialog  # noqa: E402
+from .shortcuts import ShortcutsDialog  # noqa: E402
+from .batch import BatchWindow  # noqa: E402
 from .dialogs import AddWindow, BrowserDialog, CloneWindow, PreferencesDialog  # noqa: E402
 from .popups import CompleteWindow, ProgressWindow  # noqa: E402
 from .media import audio_selector  # noqa: E402
@@ -45,6 +48,7 @@ class App(Adw.Application):
         self.manager.on_removed.append(self._close_progress)
         self.manager.on_schedule_started.append(self._on_schedule_started)
         self.manager.on_schedule_done.append(self._on_schedule_done)
+        self.manager.on_youtube_blocked.append(self._on_youtube_blocked)
         self._shutdown_timer = 0
         # Stay alive without windows so the browser extension can always reach us.
         self.hold()
@@ -58,14 +62,15 @@ class App(Adw.Application):
         for name, cb, accels in [
             ("add", lambda *_: self.open_add_dialog({}), ["<Primary>n"]),
             ("clone", lambda *_: self.open_clone_dialog(""), ["<Primary><Shift>n"]),
-            ("start-all", lambda *_: self.manager.start_all(), []),
-            ("pause-all", lambda *_: self.manager.pause_all(), []),
-            ("clear-completed", lambda *_: self._clear_completed(), []),
-            ("clear-queued", lambda *_: self.present_main().confirm_clear_queued(), []),
+            ("start-all", lambda *_: self.manager.start_all(), ["<Primary>r"]),
+            ("pause-all", lambda *_: self.manager.pause_all(), ["<Primary>p"]),
+            ("clear-completed", lambda *_: self._clear_completed(), ["<Primary><Shift>BackSpace"]),
+            ("clear-queued", lambda *_: self.present_main().confirm_clear_queued(), ["<Primary><Shift>Delete"]),
             ("community", lambda *_: CommunityDialog(self).present(self.present_main()), []),
+            ("shortcuts", lambda *_: ShortcutsDialog().present(self.present_main()), ["<Primary>question", "F1"]),
             ("preferences", lambda *_: PreferencesDialog(self).present(self.present_main()), ["<Primary>comma"]),
-            ("browser", lambda *_: BrowserDialog(self).present(self.present_main()), []),
-            ("scheduler", lambda *_: PreferencesDialog(self, "scheduler").present(self.present_main()), []),
+            ("browser", lambda *_: BrowserDialog(self).present(self.present_main()), ["<Primary>b"]),
+            ("scheduler", lambda *_: PreferencesDialog(self, "scheduler").present(self.present_main()), ["<Primary>j"]),
             ("proxy", lambda *_: PreferencesDialog(self, "network").present(self.present_main()), []),
             ("ytdlp", lambda *_: self._open_ytdlp(), []),
             ("about", lambda *_: self._about(), []),
@@ -114,6 +119,18 @@ class App(Adw.Application):
                     requests.append(json.loads(base64.urlsafe_b64decode(args[i] + "==")))
                 except ValueError:
                     pass
+                show = False
+            elif arg == "--add-file" and i + 1 < len(args):
+                # A long list of links from the browser, in a temporary file (see the native host).
+                i += 1
+                path = args[i]
+                if os.path.basename(path).startswith("tondar-add-") and path.endswith(".json"):
+                    try:
+                        with open(path, encoding="utf-8") as f:
+                            requests.append(json.load(f))
+                        os.unlink(path)
+                    except (OSError, ValueError):
+                        pass
                 show = False
             elif arg == "--new-download":  # from the launcher's right-click menu
                 GLib.idle_add(lambda: self.open_add_dialog({}) and False)
@@ -242,6 +259,9 @@ class App(Adw.Application):
         if req.get("kind") == "site":
             self.open_clone_dialog(url)
             return
+        if req.get("kind") == "batch" and isinstance(req.get("links"), list):
+            bring_to_front(BatchWindow(self, req))
+            return
         media = (req.get("kind") == "media" or looks_like_media_page(url) or req.get("clip")
                  or req.get("container") or req.get("audio"))
         if self.manager.settings["confirm_browser"] or media:  # videos always need a quality choice
@@ -314,6 +334,21 @@ class App(Adw.Application):
     def _on_schedule_started(self, count):
         if count:
             self._notify("schedule", "Scheduled downloads started", f"{count} download{'s' if count != 1 else ''}")
+
+    def _on_youtube_blocked(self, paused, cooldown):
+        if cooldown:
+            until = time.strftime("%H:%M", time.localtime(time.time() + cooldown))
+            title, body = ("YouTube asked to slow down",
+                           f"Tondar takes a break and continues the YouTube downloads at {until}.")
+        else:
+            title = "YouTube downloads paused"
+            body = (f"YouTube wants you to confirm you're not a bot, so {paused} waiting video"
+                    f"{'s were' if paused != 1 else ' was'} paused instead of failing one by one. "
+                    "Choose your browser in Preferences → Sign-in from browser (or use another network), "
+                    "then press Resume All.")
+        if self.window and self.window.get_visible():
+            self.window.toast(title + " — " + body, timeout=10)
+        self._notify("youtube", title, body)
 
     def _on_schedule_done(self):
         action = self.manager.settings["schedule_done_action"]
