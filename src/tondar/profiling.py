@@ -51,8 +51,41 @@ def describe(app, win):
     if monitor:
         write(f"Screen: {monitor.get_geometry().width}x{monitor.get_geometry().height} "
               f"scale {monitor.get_scale_factor()}  refresh {monitor.get_refresh_rate() / 1000:.0f} Hz")
+    for key in ("GSK_RENDERER", "GDK_DEBUG", "GDK_DISABLE", "GSK_DEBUG", "GDK_BACKEND", "GDK_SCALE"):
+        if os.environ.get(key):
+            write(f"Environment: {key}={os.environ[key]}")
+    surface = win.get_surface()
+    if surface is not None:
+        write(f"Window scale {surface.get_scale():g}, display {type(win.get_display()).__name__}")
+    _check_gpu(win)
     write(f"Downloads in list: {len(app.manager.items)}")
     write(f"Main window first frame: {1000 * (time.perf_counter() - _t0):.0f} ms after start\n")
+
+
+def _check_gpu(win):
+    """Which GPU drawing modes work here, and why the others don't."""
+    from gi.repository import Gsk
+
+    surface = win.get_surface()
+    try:
+        ctx = surface.create_gl_context()
+        ctx.realize()
+        major, minor = ctx.get_version()
+        write(f"OpenGL: works, version {major}.{minor}{' (GLES)' if ctx.get_use_es() else ''}")
+    except Exception as e:  # noqa: BLE001
+        write(f"OpenGL: fails: {getattr(e, 'message', e)}")
+    for name in ("NglRenderer", "GLRenderer", "VulkanRenderer"):
+        cls = getattr(Gsk, name, None)
+        if cls is None:
+            write(f"{name}: not in this GTK")
+            continue
+        try:
+            renderer = cls()
+            renderer.realize_for_display(win.get_display())
+            renderer.unrealize()
+            write(f"{name}: works")
+        except Exception as e:  # noqa: BLE001
+            write(f"{name}: fails: {getattr(e, 'message', e)}")
 
 
 def wrap(app, name, callback):
