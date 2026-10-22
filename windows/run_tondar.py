@@ -2,6 +2,11 @@
 import os
 import sys
 
+if "--profile" in sys.argv:
+    # GTK's own notes on how it picks its drawing mode (read when GTK starts, so set them first).
+    os.environ.setdefault("GDK_DEBUG", "opengl")
+    os.environ.setdefault("GSK_DEBUG", "renderer")
+
 if sys.stderr is None:  # windowed build: keep tracebacks somewhere they can be found
     if sys.platform == "darwin":
         _log = os.path.expanduser("~/Library/Logs/Tondar/tondar.log")

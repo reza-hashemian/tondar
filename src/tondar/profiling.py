@@ -21,6 +21,16 @@ PHASES = ("before-paint", "update", "layout", "paint", "after-paint")
 WATCH_SECONDS = 1.5
 
 enabled = "--profile" in sys.argv
+_gtk_log = None
+if enabled and sys.platform == "win32":
+    # A windowed build has no console: send GTK's own messages (written to the C-level stderr)
+    # to a file, to be copied into the report.
+    try:
+        _gtk_log = os.path.join(data_dir(), "profile-gtk.txt")
+        _fd = os.open(_gtk_log, os.O_WRONLY | os.O_CREAT | os.O_TRUNC)
+        os.dup2(_fd, 2)
+    except OSError:
+        _gtk_log = None
 _t0 = time.perf_counter()
 _file = None
 _busy = False
@@ -58,6 +68,13 @@ def describe(app, win):
     if surface is not None:
         write(f"Window scale {surface.get_scale():g}, display {type(win.get_display()).__name__}")
     _check_gpu(win)
+    if _gtk_log:
+        try:
+            with open(_gtk_log, encoding="utf-8", errors="replace") as f:
+                text = f.read().strip()
+            write("GTK messages:\n" + (text[-6000:] if text else "(none)"))
+        except OSError:
+            pass
     write(f"Downloads in list: {len(app.manager.items)}")
     write(f"Main window first frame: {1000 * (time.perf_counter() - _t0):.0f} ms after start\n")
 
@@ -74,6 +91,23 @@ def _check_gpu(win):
         write(f"OpenGL: works, version {major}.{minor}{' (GLES)' if ctx.get_use_es() else ''}")
     except Exception as e:  # noqa: BLE001
         write(f"OpenGL: fails: {getattr(e, 'message', e)}")
+    try:
+        chosen = Gsk.Renderer.new_for_surface(surface)
+        write(f"GTK's choice for this window: {type(chosen).__name__}")
+        chosen.unrealize()
+    except Exception as e:  # noqa: BLE001
+        write(f"GTK's choice for this window: fails: {getattr(e, 'message', e)}")
+    for name in ("GLRenderer", "VulkanRenderer"):
+        cls = getattr(Gsk, name, None)
+        if cls is None:
+            continue
+        try:
+            renderer = cls()
+            renderer.realize(surface)
+            renderer.unrealize()
+            write(f"{name} on this window: works")
+        except Exception as e:  # noqa: BLE001
+            write(f"{name} on this window: fails: {getattr(e, 'message', e)}")
     for name in ("NglRenderer", "GLRenderer", "VulkanRenderer"):
         cls = getattr(Gsk, name, None)
         if cls is None:
