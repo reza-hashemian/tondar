@@ -34,6 +34,7 @@ if enabled and sys.platform == "win32":
 _t0 = time.perf_counter()
 _file = None
 _busy = False
+_described = False
 
 
 def path():
@@ -49,6 +50,10 @@ def write(text):
 
 def describe(app, win):
     """Write what the timings depend on: versions, renderer, screen, list size."""
+    global _described
+    if _described:
+        return
+    _described = True
     try:
         renderer = type(win.get_renderer()).__name__ if win.get_renderer() else "?"
     except Exception:  # noqa: BLE001
@@ -76,7 +81,49 @@ def describe(app, win):
         except OSError:
             pass
     write(f"Downloads in list: {len(app.manager.items)}")
-    write(f"Main window first frame: {1000 * (time.perf_counter() - _t0):.0f} ms after start\n")
+    write(f"Main window first frame: {1000 * (time.perf_counter() - _t0):.0f} ms after start")
+    GLib.timeout_add(1500, lambda: _renderer_experiments(win) and False)
+
+
+def _renderer_name(win):
+    r = win.get_renderer()
+    return type(r).__name__ if r else "none"
+
+
+def _renderer_experiments(win):
+    """Which drawing mode windows get: hidden, shown, and the main window made again."""
+    hidden = Gtk.Window(title="test")
+    hidden.realize()
+    write(f"Test window, realized hidden: {_renderer_name(hidden)}")
+    hidden.destroy()
+
+    shown = Gtk.Window(title="Tondar test", default_width=200, default_height=120)
+
+    def on_shown(*_):
+        def check():
+            write(f"Test window, shown: {_renderer_name(shown)}")
+            shown.destroy()
+            remake_main()
+            return False
+        GLib.timeout_add(300, check)
+
+    shown.connect("map", on_shown)
+    shown.present()
+
+    def remake_main():
+        before = _renderer_name(win)
+        win.set_visible(False)
+        win.unrealize()
+
+        def after_map(*_):
+            def check():
+                write(f"Main window made again: {before} -> {_renderer_name(win)}\n")
+                return False
+            GLib.timeout_add(300, check)
+
+        handler = []
+        handler.append(win.connect("map", lambda *a: (win.disconnect(handler[0]), after_map())))
+        win.present()
 
 
 def _check_gpu(win):
@@ -183,7 +230,7 @@ def _attach(win, frames, watched_ids):
 def _report(name, start, sync, frames, prof, new):
     ms = lambda t: f"{1000 * t:.0f}"  # noqa: E731
     write(f"=== {name}  (at {ms(start - _t0)} ms)")
-    write(f"Our code when opening: {ms(sync)} ms" + (f"; new windows: {', '.join(type(w).__name__ for w in new)}"
+    write(f"Our code when opening: {ms(sync)} ms" + (f"; new windows: {', '.join(f'{type(w).__name__} ({_renderer_name(w)})' for w in new)}"
                                                     if new else ""))
     for label, log in frames.items():
         if not log:
