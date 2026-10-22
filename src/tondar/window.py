@@ -5,7 +5,7 @@ import threading
 import time
 import traceback
 
-from gi.repository import Adw, Gdk, Gio, GLib, Gtk
+from gi.repository import Adw, Gdk, Gio, GLib, GObject, Gtk
 
 from .core import COMPLETED, DOWNLOADING, ERROR, PAUSED, PAUSING, QUEUED
 from .util import CATEGORY_ICONS, MACOS, WINDOWS, data_dir, human_size, human_time
@@ -234,13 +234,57 @@ def open_folder(path, parent=None):
         open_uri(os.path.dirname(path) if not os.path.isdir(path) else path, parent)
 
 
-class DownloadRow(Gtk.ListBoxRow):
-    def __init__(self, win, item):
+_row_menu = None
+
+
+def row_menu():
+    """The row menu, read once and shared by all rows (its actions are looked up per row)."""
+    global _row_menu
+    if _row_menu is None:
+        _row_menu = Gtk.Builder.new_from_string(ROW_MENU, -1).get_object("menu")
+    return _row_menu
+
+
+# Each download row is a card; the list only makes rows for what is on screen.
+LIST_CSS = """
+listview.downloads { background: none; padding: 12px 0 6px 0; }
+listview.downloads > row {
+  padding: 0; margin-bottom: 6px; border-radius: 12px;
+  background-color: @card_bg_color;
+  box-shadow: 0 0 0 1px rgba(0, 0, 6, 0.03), 0 1px 3px 1px rgba(0, 0, 6, 0.07), 0 2px 6px 2px rgba(0, 0, 6, 0.03);
+}
+listview.downloads > row:hover { background-image: image(alpha(currentColor, 0.03)); }
+listview.downloads > row:active { background-image: image(alpha(currentColor, 0.08)); }
+"""
+_css_loaded = False
+
+
+def load_list_css():
+    global _css_loaded
+    if not _css_loaded:
+        provider = Gtk.CssProvider()
+        provider.load_from_string(LIST_CSS)
+        Gtk.StyleContext.add_provider_for_display(Gdk.Display.get_default(), provider,
+                                                  Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+        _css_loaded = True
+
+
+class ItemObject(GObject.Object):
+    """A download in the list model."""
+
+    def __init__(self, item):
         super().__init__()
-        self.win = win
         self.item = item
 
-        box = Gtk.Box(spacing=12, margin_top=10, margin_bottom=10, margin_start=12, margin_end=8)
+
+class DownloadRow(Gtk.Box):
+    """The row widget. It is reused for other downloads while scrolling: see bind()."""
+
+    def __init__(self, win):
+        super().__init__(spacing=12, margin_top=10, margin_bottom=10, margin_start=12, margin_end=8)
+        self.win = win
+        self.item = None
+        box = self
         self.icon = Gtk.Image(pixel_size=36, valign=Gtk.Align.CENTER)
         box.append(self.icon)
 
@@ -268,14 +312,15 @@ class DownloadRow(Gtk.ListBoxRow):
         folder.connect("clicked", lambda *_: self._open_folder())
         box.append(folder)
 
-        menu_model = Gtk.Builder.new_from_string(ROW_MENU, -1).get_object("menu")
-        more = Gtk.MenuButton(icon_name="view-more-symbolic", menu_model=menu_model, valign=Gtk.Align.CENTER)
+        # The menus are made on first use: with hundreds of rows, ready-made menus made the
+        # window slow to start and every dialog slow to open.
+        more = Gtk.MenuButton(icon_name="view-more-symbolic", valign=Gtk.Align.CENTER)
+        more.set_create_popup_func(lambda b: b.get_menu_model() or b.set_menu_model(row_menu()))
         more.add_css_class("flat")
         more.add_css_class("circular")
         box.append(more)
 
-        self.popover = Gtk.PopoverMenu(menu_model=menu_model, has_arrow=False)
-        self.popover.set_parent(box)
+        self.popover = None
         click = Gtk.GestureClick(button=3)
         click.connect("pressed", self._on_right_click)
         self.add_controller(click)
@@ -283,25 +328,32 @@ class DownloadRow(Gtk.ListBoxRow):
         group = Gio.SimpleActionGroup()
         for name, cb in [
             ("open", self._open), ("open-folder", self._open_folder), ("copy-url", self._copy_url),
-            ("progress", lambda: self.win.app.show_progress(item, force=True)),
+            ("progress", lambda: self.win.app.show_progress(self.item, force=True)),
             ("change-url", self._change_url), ("restart", self._restart),
             ("schedule", lambda: self._set_scheduled(True)), ("unschedule", lambda: self._set_scheduled(False)),
-            ("remove", lambda: self.win.remove_item(item, False)),
-            ("delete", lambda: self.win.remove_item(item, True)),
+            ("remove", lambda: self.win.remove_item(self.item, False)),
+            ("delete", lambda: self.win.remove_item(self.item, True)),
         ]:
             action = Gio.SimpleAction.new(name, None)
             action.connect("activate", lambda _a, _p, cb=cb: cb())
             group.add_action(action)
         self.actions = group
         self.insert_action_group("row", group)
-
-        self.set_child(box)
         self._state = None
+
+    def bind(self, item):
+        self.item = item
+        self._state = None
+        if self.popover is not None:
+            self.popover.popdown()
         self.update()
 
     def _on_right_click(self, gesture, _n, x, y):
         rect = Gdk.Rectangle()
         rect.x, rect.y, rect.width, rect.height = int(x), int(y), 1, 1
+        if self.popover is None:
+            self.popover = Gtk.PopoverMenu(menu_model=row_menu(), has_arrow=False)
+            self.popover.set_parent(self)
         self.popover.set_pointing_to(rect)
         self.popover.popup()
 
@@ -390,7 +442,8 @@ class DownloadRow(Gtk.ListBoxRow):
             self._open()
 
     def _show_error(self):
-        error = self.item.error
+        it = self.item
+        error = it.error
         dialog = Adw.AlertDialog(heading="Download Failed", body=error)
         dialog.add_response("close", "Close")
         dialog.add_response("copy", "Copy")
@@ -409,9 +462,9 @@ class DownloadRow(Gtk.ListBoxRow):
             elif response == "folder":
                 os.makedirs(folder, exist_ok=True)
                 open_uri(folder, self.win)
-            elif response == "retry" and self.item.status == ERROR:
-                self.win.manager.start(self.item)
-                self.update()
+            elif response == "retry" and it.status == ERROR:
+                self.win.manager.start(it)
+                self.win.refresh_item(it)
 
         dialog.connect("response", on_response)
         dialog.present(self.win)
@@ -476,13 +529,15 @@ class DownloadRow(Gtk.ListBoxRow):
         dialog.set_response_appearance("ok", Adw.ResponseAppearance.SUGGESTED)
         dialog.set_default_response("ok")
 
+        it = self.item
+
         def on_response(_d, response):
             url = entry.get_text().strip()
             if response == "ok" and url:
-                self.item.url = url
+                it.url = url
                 self.win.manager.changed()
-                self.win.manager.start(self.item)
-                self.update()
+                self.win.manager.start(it)
+                self.win.refresh_item(it)
 
         dialog.connect("response", on_response)
         dialog.present(self.win)
@@ -568,12 +623,25 @@ class MainWindow(Adw.ApplicationWindow):
         header.pack_end(Gtk.MenuButton(icon_name="open-menu-symbolic", menu_model=menu, primary=True))
         content.add_top_bar(header)
 
-        self.list = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE, valign=Gtk.Align.START)
-        self.list.add_css_class("boxed-list")
-        self.list.set_filter_func(self._filter_row)
-        self.list.set_sort_func(lambda a, b: (b.item.created > a.item.created) - (b.item.created < a.item.created))
-        self.list.connect("row-activated", lambda _l, row: row.activate_row())
-        clamp = Adw.Clamp(maximum_size=1100, child=self.list, margin_top=12, margin_bottom=12, margin_start=12, margin_end=12)
+        # A list view only makes widgets for the rows on screen. With a plain list box every
+        # download had its own row widgets, and with hundreds of downloads opening any dialog
+        # or window paused while GTK went over all of them.
+        load_list_css()
+        self.store = Gio.ListStore(item_type=ItemObject)
+        self._objects = {}  # item id -> ItemObject
+        sorter = Gtk.CustomSorter.new(
+            lambda a, b, _d: (b.item.created > a.item.created) - (b.item.created < a.item.created), None)
+        self._filter = Gtk.CustomFilter.new(lambda obj, _d: self._matches(obj.item), None)
+        self.filtered = Gtk.FilterListModel(model=Gtk.SortListModel(model=self.store, sorter=sorter), filter=self._filter)
+        factory = Gtk.SignalListItemFactory()
+        factory.connect("setup", lambda _f, li: li.set_child(DownloadRow(self)))
+        factory.connect("bind", self._bind_row)
+        factory.connect("unbind", self._unbind_row)
+        self.list = Gtk.ListView(model=Gtk.NoSelection(model=self.filtered), factory=factory,
+                                 single_click_activate=True, margin_start=12, margin_end=12)
+        self.list.add_css_class("downloads")
+        self.list.connect("activate", self._on_activate)
+        clamp = Adw.ClampScrollable(maximum_size=1100, child=self.list)
         scrolled = Gtk.ScrolledWindow(child=clamp, vexpand=True, hscrollbar_policy=Gtk.PolicyType.NEVER)
 
         self.empty = Adw.StatusPage(
@@ -601,8 +669,9 @@ class MainWindow(Adw.ApplicationWindow):
         bp.add_setter(self.sidebar_btn, "visible", True)
         self.add_breakpoint(bp)
 
-        for item in self.manager.items:
-            self._add_row(item)
+        objects = [ItemObject(item) for item in self.manager.items]
+        self._objects = {obj.item.id: obj for obj in objects}
+        self.store.splice(0, 0, objects)
         self.manager.on_added.append(self._on_added)
         self.manager.on_removed.append(self._on_removed)
         self._refresh_empty()
@@ -653,23 +722,55 @@ class MainWindow(Adw.ApplicationWindow):
         return True
 
     # --- list management ------------------------------------------------------------
-    def _add_row(self, item):
-        row = DownloadRow(self, item)
+    def _bind_row(self, _factory, list_item):
+        row, item = list_item.get_child(), list_item.get_item().item
+        row.bind(item)
         self.rows[item.id] = row
-        self.list.append(row)
+
+    def _unbind_row(self, _factory, list_item):
+        row = list_item.get_child()
+        if row.item is not None and self.rows.get(row.item.id) is row:
+            del self.rows[row.item.id]
+
+    def _on_activate(self, _view, position):
+        obj = self.filtered.get_item(position)
+        row = obj and self.rows.get(obj.item.id)
+        if row:
+            row.activate_row()
+
+    def refresh_item(self, item):
+        """Show a download's new state now, if its row is on screen."""
+        row = self.rows.get(item.id)
+        if row:
+            row.update()
 
     def _on_added(self, item):
-        self._add_row(item)
+        if item.id not in self._objects:
+            at_top = self.list.get_vadjustment().get_value() < 1
+            obj = ItemObject(item)
+            self._objects[item.id] = obj
+            self.store.append(obj)
+            if at_top and self.filtered.get_n_items():
+                # The list keeps showing the rows it showed; scroll so the new download is seen.
+                self.list.scroll_to(0, Gtk.ListScrollFlags.NONE, None)
         self._refresh_empty()
 
     def _on_removed(self, item):
-        row = self.rows.pop(item.id, None)
-        if row:
-            self.list.remove(row)
+        obj = self._objects.pop(item.id, None)
+        if obj:
+            found, pos = self.store.find(obj)
+            if found:
+                self.store.remove(pos)
         self._refresh_empty()
 
+    def invalidate_filter(self, to_top=False):
+        self._filter.changed(Gtk.FilterChange.DIFFERENT)
+        if to_top and self.filtered.get_n_items():
+            # A list view stays on the row it showed; a new filter or search starts at the top.
+            self.list.scroll_to(0, Gtk.ListScrollFlags.NONE, None)
+
     def _refresh_empty(self):
-        visible = any(self._matches(r.item) for r in self.rows.values())
+        visible = self.filtered.get_n_items() > 0
         self.stack.set_visible_child_name("list" if visible else "empty")
 
     def _matches(self, item):
@@ -688,21 +789,18 @@ class MainWindow(Adw.ApplicationWindow):
             return self.search in (item.display_name + " " + item.url).lower()
         return True
 
-    def _filter_row(self, row):
-        return self._matches(row.item)
-
     def _on_filter(self, _box, row):
         if row is None:
             return
         self.filter = row.key
-        self.list.invalidate_filter()
+        self.invalidate_filter(to_top=True)
         self._refresh_empty()
         if self.split.get_collapsed():
             self.split.set_show_sidebar(False)
 
     def _on_search(self, entry):
         self.search = entry.get_text().strip().lower()
-        self.list.invalidate_filter()
+        self.invalidate_filter(to_top=True)
         self._refresh_empty()
 
     def refresh(self):
@@ -718,7 +816,7 @@ class MainWindow(Adw.ApplicationWindow):
             signature = tuple((i.id, i.status, i.scheduled) for i in self.manager.items)
             if signature != self._filter_signature:
                 self._filter_signature = signature
-                self.list.invalidate_filter()
+                self.invalidate_filter()
                 self._refresh_empty()
         active = sum(1 for i in self.manager.items if i.status == DOWNLOADING)
         queued = sum(1 for i in self.manager.items if i.status == QUEUED)

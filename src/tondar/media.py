@@ -179,14 +179,36 @@ def _encoding_args():
     return ["--encoding", "utf-8"] if WINDOWS else []
 
 
+_version_cache = {}  # yt-dlp command -> (file time, version)
+
+
+def _ytdlp_stamp(cmd):
+    try:
+        return os.path.getmtime(cmd[-1])
+    except OSError:
+        return None
+
+
+def cached_ytdlp_version():
+    """The version found earlier for the current yt-dlp, if it hasn't changed since; else None."""
+    cmd = ytdlp_command()
+    if not cmd:
+        return ""
+    hit = _version_cache.get(tuple(cmd))
+    return hit[1] if hit and hit[0] == _ytdlp_stamp(cmd) else None
+
+
 def ytdlp_version():
     cmd = ytdlp_command()
     if not cmd:
         return None
     try:
-        return subprocess.run(cmd + ["--version"], capture_output=True, timeout=30, **_proc_kwargs()).stdout.strip() or None
+        version = subprocess.run(cmd + ["--version"], capture_output=True, timeout=30, **_proc_kwargs()).stdout.strip() or None
     except (OSError, subprocess.SubprocessError):
         return None
+    if version:
+        _version_cache[tuple(cmd)] = (_ytdlp_stamp(cmd), version)
+    return version
 
 
 def install_ytdlp(proxy=None):

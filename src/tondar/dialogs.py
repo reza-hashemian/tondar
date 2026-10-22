@@ -18,7 +18,7 @@ from .http_task import probe
 from .media import (
     PLAYLIST_HINT, YTDLP_URL, audio_selector, container_choices, describe_formats, find_page_media, format_time,
     install_ytdlp, is_playlist, parse_time, playlist_choices, playlist_entries, probe_media, ffmpeg_available,
-    quality_choices, ytdlp_command, ytdlp_version, BROWSERS, is_bot_check,
+    quality_choices, ytdlp_command, ytdlp_version, cached_ytdlp_version, BROWSERS, is_bot_check,
 )
 from .net import display_proxy, test_proxy
 from .util import (
@@ -1107,18 +1107,40 @@ class PreferencesDialog(Adw.PreferencesDialog):
                            "YouTube says “too many requests”. Keeps big playlists from getting your connection blocked."))
         page.add(g)
         self.add(page)
-        self.add(self._network_page())
-        self.add(self._scheduler_page())
+        # Only the page shown first is filled now, the others right after the dialog is on screen:
+        # building everything up front made the dialog appear with a noticeable pause.
+        others = []
+        for name, title, icon, fill in (("network", "Network", "network-wired-symbolic", self._network_page),
+                                        ("scheduler", "Scheduler", "alarm-symbolic", self._scheduler_page)):
+            other = Adw.PreferencesPage(title=title, icon_name=icon, name=name)
+            self.add(other)
+            if name == page_name:
+                fill(other)
+            else:
+                others.append((fill, other))
         if page_name:
             self.set_visible_page_name(page_name)
 
-        threading.Thread(target=lambda: GLib.idle_add(self._show_version, ytdlp_version()), daemon=True).start()
+        version = cached_ytdlp_version()
+        if version is not None:
+            self._show_version(version)
+
+        def after_shown():
+            while others:
+                fill, other = others.pop(0)
+                fill(other)
+            if version is None and not self._version_checked:
+                self._version_checked = True
+                threading.Thread(target=lambda: GLib.idle_add(self._show_version, ytdlp_version()), daemon=True).start()
+            return False
+
+        self._version_checked = False
+        self.connect("map", lambda *_: GLib.timeout_add(250, after_shown) and None)
         self.connect("closed", lambda *_: app.manager.save_settings())
 
     # --- Network page -----------------------------------------------------------------------
-    def _network_page(self):
+    def _network_page(self, page):
         s = self.app.manager.settings
-        page = Adw.PreferencesPage(title="Network", icon_name="network-wired-symbolic", name="network")
         g = Adw.PreferencesGroup(
             title="Proxy",
             description="Used for every download, video lookups and yt-dlp updates. "
@@ -1161,7 +1183,6 @@ class PreferencesDialog(Adw.PreferencesDialog):
         self.test_row.add_suffix(self.test_btn)
         g.add(self.test_row)
         page.add(g)
-        return page
 
     def _test_proxy(self):
         proxy = self.app.manager.proxy_for("https://www.google.com/")
@@ -1184,9 +1205,8 @@ class PreferencesDialog(Adw.PreferencesDialog):
         threading.Thread(target=work, daemon=True).start()
 
     # --- Scheduler page -------------------------------------------------------------------
-    def _scheduler_page(self):
+    def _scheduler_page(self, page):
         s = self.app.manager.settings
-        page = Adw.PreferencesPage(title="Scheduler", icon_name="alarm-symbolic", name="scheduler")
         g = Adw.PreferencesGroup(
             description="Scheduled downloads start by themselves at the chosen time — handy for night-time internet. "
                         "Add downloads with the “Schedule” button in the New Download window, "
@@ -1241,7 +1261,6 @@ class PreferencesDialog(Adw.PreferencesDialog):
         done_row.connect("notify::selected", lambda r, _p: self._set("schedule_done_action", actions[r.get_selected()]))
         what.add(done_row)
         page.add(what)
-        return page
 
     def _time_row(self, title, key, value):
         row = Adw.ActionRow(title=title)
