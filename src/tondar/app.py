@@ -12,7 +12,7 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 from gi.repository import Adw, Gio, GLib, Gtk  # noqa: E402
 
-from . import APP_ID, VERSION, ipc  # noqa: E402
+from . import APP_ID, VERSION, ipc, profiling  # noqa: E402
 from .core import COMPLETED, DOWNLOADING, QUEUED, Item, Manager  # noqa: E402
 from .community import CommunityDialog  # noqa: E402
 from .shortcuts import ShortcutsDialog  # noqa: E402
@@ -78,7 +78,7 @@ class App(Adw.Application):
             ("show", lambda *_: self.present_main(), []),
         ]:
             action = Gio.SimpleAction.new(name, None)
-            action.connect("activate", cb)
+            action.connect("activate", profiling.wrap(self, name, cb))
             self.add_action(action)
             if accels:
                 self.set_accels_for_action(f"app.{name}", accels)
@@ -151,6 +151,15 @@ class App(Adw.Application):
     def present_main(self):
         if not self.window:
             self.window = MainWindow(self)
+            if profiling.enabled:
+                win = self.window
+                hid = []
+
+                def first_frame(*_):
+                    win.get_frame_clock().disconnect(hid[0])
+                    profiling.describe(self, win)
+
+                win.connect("realize", lambda w: hid.append(w.get_frame_clock().connect("after-paint", first_frame)))
         self.window.present()
         return self.window
 
