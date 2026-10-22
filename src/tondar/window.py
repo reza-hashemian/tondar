@@ -249,7 +249,7 @@ def row_menu():
 LIST_CSS = """
 listview.downloads { background: none; padding: 12px 0 6px 0; }
 listview.downloads > row {
-  padding: 0; margin-bottom: 6px; border-radius: 12px;
+  padding: 0; margin: 0 6px 6px 6px; border-radius: 12px;
   background-color: @card_bg_color;
   box-shadow: 0 0 0 1px rgba(0, 0, 6, 0.03), 0 1px 3px 1px rgba(0, 0, 6, 0.07), 0 2px 6px 2px rgba(0, 0, 6, 0.03);
 }
@@ -638,7 +638,7 @@ class MainWindow(Adw.ApplicationWindow):
         factory.connect("bind", self._bind_row)
         factory.connect("unbind", self._unbind_row)
         self.list = Gtk.ListView(model=Gtk.NoSelection(model=self.filtered), factory=factory,
-                                 single_click_activate=True, margin_start=12, margin_end=12)
+                                 single_click_activate=True, margin_start=6, margin_end=6)
         self.list.add_css_class("downloads")
         self.list.connect("activate", self._on_activate)
         clamp = Adw.ClampScrollable(maximum_size=1100, child=self.list)

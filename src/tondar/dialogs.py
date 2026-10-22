@@ -1107,35 +1107,31 @@ class PreferencesDialog(Adw.PreferencesDialog):
                            "YouTube says “too many requests”. Keeps big playlists from getting your connection blocked."))
         page.add(g)
         self.add(page)
-        # Only the page shown first is filled now, the others right after the dialog is on screen:
-        # building everything up front made the dialog appear with a noticeable pause.
-        others = []
         for name, title, icon, fill in (("network", "Network", "network-wired-symbolic", self._network_page),
                                         ("scheduler", "Scheduler", "alarm-symbolic", self._scheduler_page)):
             other = Adw.PreferencesPage(title=title, icon_name=icon, name=name)
+            fill(other)
             self.add(other)
-            if name == page_name:
-                fill(other)
-            else:
-                others.append((fill, other))
         if page_name:
             self.set_visible_page_name(page_name)
 
+        # Asking yt-dlp its version takes a second of CPU: do it once per session, and only after
+        # the opening animation, which it made stutter.
         version = cached_ytdlp_version()
         if version is not None:
             self._show_version(version)
-
-        def after_shown():
-            while others:
-                fill, other = others.pop(0)
-                fill(other)
-            if version is None and not self._version_checked:
-                self._version_checked = True
+        else:
+            def check():
                 threading.Thread(target=lambda: GLib.idle_add(self._show_version, ytdlp_version()), daemon=True).start()
-            return False
+                return False
 
-        self._version_checked = False
-        self.connect("map", lambda *_: GLib.timeout_add(250, after_shown) and None)
+            self._version_timer = 0
+
+            def on_map(*_):
+                if not self._version_timer:
+                    self._version_timer = GLib.timeout_add(800, check)
+
+            self.connect("map", on_map)
         self.connect("closed", lambda *_: app.manager.save_settings())
 
     # --- Network page -----------------------------------------------------------------------
